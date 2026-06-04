@@ -10,4 +10,4 @@ CREATE TABLE knowledge_base (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_knowledge_base_owner_id ON knowledge_base(owner_id);
+CREATE INDEX idx_knowledge_base_owner_id ON knowledge_base (owner_id);
