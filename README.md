@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 1.3：`knowledge_base` 表与基础数据访问。
+当前阶段：Phase 1.4：`knowledge_base` 最小 CRUD API。
 
 ## 技术栈
 
@@ -94,7 +94,43 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口。本轮尚未新增 `knowledge_base` REST API，因此 Swagger 中还不会出现知识库 CRUD 接口。
+当前 Swagger 页面能看到健康检查接口和知识库 CRUD 接口。
+
+## 知识库 CRUD API
+
+创建知识库：
+
+```bash
+curl -X POST http://localhost:8080/api/knowledge-bases \
+  -H "Content-Type: application/json" \
+  -d '{"name":"默认知识库","description":"用于本地验证","ownerId":1,"visibility":"PRIVATE"}'
+```
+
+查询知识库列表：
+
+```bash
+curl http://localhost:8080/api/knowledge-bases
+```
+
+查询单个知识库：
+
+```bash
+curl http://localhost:8080/api/knowledge-bases/1
+```
+
+更新知识库：
+
+```bash
+curl -X PUT http://localhost:8080/api/knowledge-bases/1 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"更新后的知识库","description":"已更新","visibility":"PUBLIC"}'
+```
+
+删除知识库：
+
+```bash
+curl -X DELETE http://localhost:8080/api/knowledge-bases/1
+```
 
 ## 当前已完成
 
@@ -113,13 +149,14 @@ curl http://localhost:8080/actuator/health
 - 新增 `KnowledgeBase` Entity。
 - 新增 `KnowledgeBaseMapper`。
 - 新增 `KnowledgeBaseService` 和 `KnowledgeBaseServiceImpl`。
-- 新增 `KnowledgeBaseCreateRequest` 和 `KnowledgeBaseResponse` DTO。
+- 新增 `KnowledgeBaseCreateRequest`、`KnowledgeBaseUpdateRequest` 和 `KnowledgeBaseResponse` DTO。
 - 新增知识库持久化测试，覆盖表创建、Mapper 插入查询和 Service 基础方法。
+- 新增 `KnowledgeBaseController`。
+- 新增 `knowledge_base` 最小 REST CRUD API。
+- 新增知识库 CRUD API 测试。
 
 ## 本轮尚未实现
 
-- `knowledge_base` REST CRUD API
-- `KnowledgeBaseController`
 - 文档上传
 - 文档解析
 - `document` 表
@@ -135,4 +172,4 @@ curl http://localhost:8080/actuator/health
 
 ## 下一步计划
 
-进入 Phase 1.4：`knowledge_base` 最小 CRUD API。
+进入 Phase 1.5：Phase 1 收尾、接口验证与代码导读整理。
