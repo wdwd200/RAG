@@ -26,6 +26,10 @@ springdoc:
     path: /swagger-ui.html
   packages-to-scan: com.example.ragbackend
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
 management:
   endpoints:
     web:
