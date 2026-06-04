@@ -24,11 +24,14 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public KnowledgeBaseResponse create(KnowledgeBaseCreateRequest request) {
+        Long ownerId = request.ownerId() == null ? DEFAULT_OWNER_ID : request.ownerId();
+        String visibility = normalizeVisibility(request.visibility());
+
         KnowledgeBase knowledgeBase = new KnowledgeBase();
         knowledgeBase.setName(request.name());
         knowledgeBase.setDescription(request.description());
-        knowledgeBase.setOwnerId(request.ownerId() == null ? DEFAULT_OWNER_ID : request.ownerId());
-        knowledgeBase.setVisibility(normalizeVisibility(request.visibility()));
+        knowledgeBase.setOwnerId(ownerId);
+        knowledgeBase.setVisibility(visibility);
 
         knowledgeBaseMapper.insert(knowledgeBase);
 

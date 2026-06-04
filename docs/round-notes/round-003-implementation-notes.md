@@ -8,6 +8,8 @@
 
 本轮不实现 Controller，也不对外暴露知识库 CRUD 接口。
 
+Phase 1.3.1 已对 Phase 1.3 新增 Java / SQL 文件做格式化修复，保证源码可读性，未新增业务功能。
+
 ## 2. 本轮完成内容
 
 - 新增 Flyway migration：`V2__create_knowledge_base_table.sql`。
