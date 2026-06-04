@@ -4,6 +4,8 @@ Phase 1.3.2 已真正将 Phase 1.3 新增 Java / SQL 文件改为多行格式，
 
 Phase 1.3.3 已统一 Phase 1.3 新增源码文件的换行符，避免 GitHub raw 页面显示为单行文件。
 
+Phase 1.3.4 已强制将 Phase 1.3 新增 Java / SQL 文件从 CR-only 或异常换行转换为 LF，并确认本次 commit 中包含源码文件本身的变更。
+
 ## 1. 本轮目标
 
 本轮执行 Phase 1.3：`knowledge_base` 表与基础数据访问。

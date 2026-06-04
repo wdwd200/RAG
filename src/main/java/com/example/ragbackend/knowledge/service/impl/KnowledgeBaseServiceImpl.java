@@ -1,5 +1,8 @@
 package com.example.ragbackend.knowledge.service.impl;
 
+import java.util.List;
+import java.util.Optional;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.ragbackend.knowledge.dto.KnowledgeBaseCreateRequest;
 import com.example.ragbackend.knowledge.dto.KnowledgeBaseResponse;
@@ -8,9 +11,6 @@ import com.example.ragbackend.knowledge.mapper.KnowledgeBaseMapper;
 import com.example.ragbackend.knowledge.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor

@@ -6,13 +6,10 @@ public record KnowledgeBaseResponse(
         Long id,
         String name,
         String description,
-
         Long ownerId,
         String visibility,
-
         Integer documentCount,
         Integer chunkCount,
-
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
