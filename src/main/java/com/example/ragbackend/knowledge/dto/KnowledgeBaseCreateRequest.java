@@ -7,11 +7,8 @@ public record KnowledgeBaseCreateRequest(
         @NotBlank
         @Size(max = 100)
         String name,
-
         String description,
-
         Long ownerId,
-
         String visibility
 ) {
 }

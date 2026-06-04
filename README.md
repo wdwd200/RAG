@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 1.4：`knowledge_base` 最小 CRUD API。
+当前阶段：Phase 1 已完成，`knowledge_base` 最小 CRUD API 已可用。
 
 ## 技术栈
 
@@ -50,17 +50,17 @@ docker compose ps
 mvn test
 ```
 
-启动应用：
+推荐启动应用：
+
+```bash
+mvn clean package
+java -jar target/rag-backend-0.0.1-SNAPSHOT.jar
+```
+
+如果确认当前路径不会触发 classpath 编码问题，也可以使用：
 
 ```bash
 mvn spring-boot:run
-```
-
-如果 Windows 中文路径下 `mvn spring-boot:run` 遇到 classpath 编码问题，可以先打包再运行：
-
-```bash
-mvn package
-java -jar target/rag-backend-0.0.1-SNAPSHOT.jar
 ```
 
 默认服务端口为 `8080`，可通过环境变量 `SERVER_PORT` 或 `src/main/resources/application.yml` 中的 `server.port` 调整。
@@ -172,4 +172,6 @@ curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 
 ## 下一步计划
 
-进入 Phase 1.5：Phase 1 收尾、接口验证与代码导读整理。
+进入 Phase 2：文档上传与文档元数据。
+
+下一步建议先做 Phase 2.1：`document` 表、文档状态枚举与文档元数据基础。

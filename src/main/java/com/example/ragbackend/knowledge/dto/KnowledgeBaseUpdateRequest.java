@@ -7,9 +7,7 @@ public record KnowledgeBaseUpdateRequest(
         @NotBlank
         @Size(max = 100)
         String name,
-
         String description,
-
         String visibility
 ) {
 }
