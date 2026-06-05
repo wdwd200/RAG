@@ -13,3 +13,6 @@ app:
     local-root: target/test-storage/documents
     allowed-extensions: txt,md,pdf,docx
     max-file-size-bytes: 20
+  chunk:
+    size: 8
+    overlap: 2

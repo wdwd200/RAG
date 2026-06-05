@@ -1,8 +1,8 @@
 # RAG 后端知识库
 
-RAG 后端知识库是一个面向知识库管理、文档上传、后续文档解析与检索增强生成能力的 Spring Boot 后端项目。
+RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 3.1 已完成。本阶段新增了 `document_chunk` 表、chunk 基础数据访问代码、`DocumentParser` 抽象，以及 txt/md 本地文本解析器。本阶段不生成 chunk，也不提供文档处理 API。
+当前阶段：Phase 3.2 已完成。本阶段新增固定窗口文本切分、文档处理服务、文档处理接口和 chunk 查询接口。已上传的 txt/md 文档可以同步处理为 `document_chunk` 数据，处理成功后 document 状态为 `CHUNKED`。
 
 ## 技术栈
 
@@ -67,7 +67,14 @@ mvn spring-boot:run
 
 默认允许上传的文件后缀为 `txt,md,pdf,docx`，可通过 `APP_STORAGE_ALLOWED_EXTENSIONS` 覆盖。默认单文件最大大小为 10MB，可通过 `APP_STORAGE_MAX_FILE_SIZE_BYTES` 覆盖。
 
-Spring multipart 默认上限配置为 20MB request body 21MB，用于保证超过 10MB 的文件先进入业务校验并返回统一 `FILE_TOO_LARGE` 响应。
+默认 chunk 切分配置：
+
+```text
+APP_CHUNK_SIZE=800
+APP_CHUNK_OVERLAP=100
+```
+
+`APP_CHUNK_OVERLAP` 必须小于 `APP_CHUNK_SIZE`。
 
 ## 健康检查
 
@@ -83,8 +90,6 @@ curl http://localhost:8080/api/health
 curl http://localhost:8080/api/health/database
 ```
 
-数据库健康检查会执行 `SELECT 1`，只返回数据库状态、数据库类型、校验 SQL 和检查时间，不返回数据库密码、用户名或完整 JDBC URL。
-
 Actuator 健康检查：
 
 ```bash
@@ -98,7 +103,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口、文档元数据接口和文件上传接口。Phase 3.1 没有新增 chunk REST Controller，因此不会出现 chunk 查询 API。
+当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口、文档元数据接口、文件上传接口、文档处理接口和 chunk 查询接口。
 
 ## 知识库 CRUD API
 
@@ -136,16 +141,45 @@ curl -X PUT http://localhost:8080/api/knowledge-bases/1 \
 curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 ```
 
-## 文档元数据 API
-
-文档元数据接口可用，只创建和管理文档记录，不接收 multipart 文件，也不做文档解析。
+## 文档 API
 
 创建文档元数据：
 
 ```bash
 curl -X POST http://localhost:8080/api/documents \
   -H "Content-Type: application/json" \
-  -d '{"knowledgeBaseId":1,"fileName":"demo.pdf","fileType":"pdf","fileSize":1024,"storagePath":"documents/demo.pdf","createdBy":1}'
+  -d '{"knowledgeBaseId":1,"fileName":"demo.txt","fileType":"txt","fileSize":1024,"storagePath":"documents/demo.txt","createdBy":1}'
+```
+
+上传文件并创建文档记录：
+
+```bash
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "knowledgeBaseId=1" \
+  -F "createdBy=1" \
+  -F "file=@/path/to/demo.txt"
+```
+
+处理已上传文档并生成 chunk：
+
+```bash
+curl -X POST http://localhost:8080/api/documents/1/process
+```
+
+处理成功后，返回示例：
+
+```json
+{
+  "success": true,
+  "code": "OK",
+  "message": "success",
+  "data": {
+    "documentId": 1,
+    "status": "CHUNKED",
+    "chunkCount": 3,
+    "processingVersion": 1
+  }
+}
 ```
 
 查询单个文档元数据：
@@ -166,32 +200,37 @@ curl http://localhost:8080/api/knowledge-bases/1/documents
 curl -X DELETE http://localhost:8080/api/documents/1
 ```
 
-删除 document 时，如果记录中存在 `storagePath`，系统会先尝试删除对应的本地文件，再删除数据库记录。本地文件已不存在时，删除 document 仍可成功。
+## Chunk API
 
-## 文件上传 API
-
-文件上传接口可用，支持 multipart 上传、本地 storage、文件类型限制、文件大小限制，以及删除 document 时同步删除本地文件。
-
-上传文件并创建文档记录：
+查询某个 document 下当前 active chunk：
 
 ```bash
-curl -X POST http://localhost:8080/api/documents/upload \
-  -F "knowledgeBaseId=1" \
-  -F "createdBy=1" \
-  -F "file=@/path/to/demo.txt"
+curl http://localhost:8080/api/documents/1/chunks
 ```
 
-上传成功后，原始文件会保存到本地 storage，接口会返回 document 记录，状态为 `UPLOADED`。
+查询单个 active chunk：
 
-当前允许的默认后缀为 `txt,md,pdf,docx`。默认单文件最大大小为 10MB。
+```bash
+curl http://localhost:8080/api/chunks/1
+```
 
-## Phase 3.1 文档解析与 chunk 基础
+chunk 列表按 `chunkIndex` 升序返回。不存在或非 active 的 chunk 会返回 `DOCUMENT_CHUNK_NOT_FOUND`。
 
-本阶段新增 `document_chunk` 表，用于为后续 TextSplitter 和 embedding 链路保存 chunk 事实数据。当前只提供 Entity、Mapper、Service，不提供 REST Controller。
-
-Chunk 数据访问链路：
+## 文档处理调用链
 
 ```text
+POST /api/documents/{id}/process
+  ↓
+DocumentController
+  ↓
+DocumentProcessingService
+  ↓
+DocumentParserRegistry
+  ↓
+TxtDocumentParser / MarkdownDocumentParser
+  ↓
+TextSplitter
+  ↓
 DocumentChunkService
   ↓
 DocumentChunkMapper
@@ -199,65 +238,43 @@ DocumentChunkMapper
 document_chunk 表
 ```
 
-本阶段新增 `DocumentParser` 抽象和 `DocumentParserRegistry`，并实现 txt/md 解析器。txt 和 md 当前都按 UTF-8 普通文本读取，Markdown 暂不做 AST 解析。
+当前 parser 只支持 txt/md，按 UTF-8 普通文本读取。Markdown 暂不做 AST 解析。
 
-Parser 调用链：
+当前 splitter 使用固定窗口切分，支持 `chunkSize` 和 `overlap`。`tokenCount` 使用简单估算，不做精准 token 计算。
 
-```text
-DocumentParserRegistry
-  ↓
-TxtDocumentParser / MarkdownDocumentParser
-  ↓
-读取本地文件
-  ↓
-ParsedDocument
-```
-
-当前 parser 只负责读取本地文件并返回 `ParsedDocument`。parser 不切分 chunk，不更新 document 状态，不写数据库。
+重复处理同一文档时，当前实现会先删除该 document 下旧 chunk，再插入新 chunk。处理成功后的最终状态是 `CHUNKED`，不是 `INDEXED`。
 
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
 - 配置 Java 17、Spring Boot 3.x 和基础 Web 能力。
-- 新增统一响应结构 `ApiResponse`。
-- 新增业务异常 `BusinessException`。
-- 新增全局异常处理 `GlobalExceptionHandler`。
-- 保留统一风格健康检查接口 `GET /api/health`。
-- 新增数据库健康检查接口 `GET /api/health/database`。
+- 新增统一响应结构 `ApiResponse` 和全局异常处理。
+- 新增健康检查和数据库健康检查接口。
 - 新增 Docker Compose，包含 PostgreSQL 和 Qdrant。
-- 配置 PostgreSQL datasource、Hikari 和 Flyway。
-- 新增 Flyway baseline migration：`V1__init_database.sql`。
-- 新增 `knowledge_base` 表 migration：`V2__create_knowledge_base_table.sql`。
-- 引入 MyBatis-Plus，并配置 Mapper 扫描。
-- 新增知识库 Entity、Mapper、Service、DTO 和 REST CRUD API。
-- 新增知识库持久化与 Controller 测试。
-- 新增 `document` 表 migration：`V3__create_document_table.sql`。
-- 新增文档状态枚举 `DocumentStatus`。
-- 新增文档 Entity、Mapper、Service、Controller 和元数据 API。
-- 新增本地 storage 配置、`FileStorageService` 和 `LocalFileStorageService`。
-- 新增文件上传接口 `POST /api/documents/upload`。
-- 上传成功后保存原始文件并创建 document 记录。
-- 新增上传文件类型和大小限制。
-- 删除 document 时同步删除本地文件。
-- 新增 `document_chunk` 表 migration：`V4__create_document_chunk_table.sql`。
-- 新增 `DocumentChunk` Entity、Mapper、Service 和 Response DTO。
+- 配置 PostgreSQL datasource、Hikari、Flyway 和 MyBatis-Plus。
+- 新增 `knowledge_base` 表、Entity、Mapper、Service、DTO 和 REST CRUD API。
+- 新增 `document` 表、Entity、Mapper、Service、Controller、元数据 API 和上传 API。
+- 新增本地 storage、上传文件类型限制、大小限制和删除文件一致性处理。
+- 新增 `document_chunk` 表、Entity、Mapper、Service 和 Response DTO。
 - 新增 `DocumentParser` 抽象、`DocumentParserRegistry`、txt/md parser 和解析结果模型。
-- 新增 parser 与 chunk 基础测试。
+- 新增 `TextSplitter` 抽象、`FixedWindowTextSplitter`、`SplitOptions` 和 `TextChunk`。
+- 新增 chunk 配置 `app.chunk.size` 和 `app.chunk.overlap`。
+- 新增 `DocumentProcessingService`，集中编排文档解析、切分和 chunk 入库。
+- 新增 `POST /api/documents/{id}/process`。
+- 新增 `GET /api/documents/{documentId}/chunks` 和 `GET /api/chunks/{id}`。
+- 新增 parser、splitter、chunk 和文档处理相关测试。
 
 ## 本阶段刻意不做
 
-- 不做 TextSplitter。
-- 不做 chunk 切分和 chunk 生成。
-- 不做 chunk 查询 Controller 或 REST API。
-- 不做 `/api/documents/{id}/process`。
-- 不改变 document 状态流转。
-- 不做 PDF / docx 解析。
 - 不做 embedding。
-- 不接入 Qdrant Java 客户端。
-- 不做向量检索。
+- 不写入 Qdrant。
+- 不做向量入库和向量检索。
 - 不做 LLM。
 - 不做 SSE。
 - 不做 Redis / Elasticsearch / RabbitMQ。
+- 不做异步处理。
+- 不做复杂重试。
+- 不做 PDF / docx 解析。
 - 不做登录、JWT、Spring Security 权限系统。
 
 ## 阶段文档
@@ -265,7 +282,8 @@ ParsedDocument
 - Phase 1 总结：`docs/phase-notes/phase-001-summary.md`
 - Phase 2 总结：`docs/phase-notes/phase-002-summary.md`
 - Phase 3.1 实现说明：`docs/round-notes/round-010-implementation-notes.md`
+- Phase 3.2 实现说明：`docs/round-notes/round-011-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 3.2：TextSplitter、文档处理服务与 chunk 入库。
+进入 Phase 3.3：处理失败状态、重新处理与文档状态机补强。

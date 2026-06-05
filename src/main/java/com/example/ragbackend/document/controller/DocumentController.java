@@ -2,7 +2,9 @@ package com.example.ragbackend.document.controller;
 
 import com.example.ragbackend.common.response.ApiResponse;
 import com.example.ragbackend.document.dto.DocumentCreateRequest;
+import com.example.ragbackend.document.dto.DocumentProcessingResponse;
 import com.example.ragbackend.document.dto.DocumentResponse;
+import com.example.ragbackend.document.service.DocumentProcessingService;
 import com.example.ragbackend.document.service.DocumentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,6 +26,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class DocumentController {
 
   private final DocumentService documentService;
+  private final DocumentProcessingService documentProcessingService;
 
   @Operation(summary = "Create document metadata")
   @PostMapping("/api/documents")
@@ -45,6 +48,12 @@ public class DocumentController {
   @GetMapping("/api/documents/{id}")
   public ApiResponse<DocumentResponse> findById(@PathVariable Long id) {
     return ApiResponse.success(documentService.findById(id));
+  }
+
+  @Operation(summary = "Process uploaded document into chunks")
+  @PostMapping("/api/documents/{id}/process")
+  public ApiResponse<DocumentProcessingResponse> process(@PathVariable Long id) {
+    return ApiResponse.success(documentProcessingService.process(id));
   }
 
   @Operation(summary = "List documents by knowledge base id")

@@ -34,6 +34,7 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
     public List<DocumentChunkResponse> findByDocumentId(Long documentId) {
         LambdaQueryWrapper<DocumentChunk> queryWrapper = new LambdaQueryWrapper<DocumentChunk>()
                 .eq(DocumentChunk::getDocumentId, documentId)
+                .eq(DocumentChunk::getIsActive, true)
                 .orderByAsc(DocumentChunk::getChunkIndex)
                 .orderByAsc(DocumentChunk::getId);
         return documentChunkMapper.selectList(queryWrapper)
@@ -50,7 +51,10 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
     }
 
     private DocumentChunk getExistingDocumentChunk(Long id) {
-        DocumentChunk documentChunk = documentChunkMapper.selectById(id);
+        LambdaQueryWrapper<DocumentChunk> queryWrapper = new LambdaQueryWrapper<DocumentChunk>()
+                .eq(DocumentChunk::getId, id)
+                .eq(DocumentChunk::getIsActive, true);
+        DocumentChunk documentChunk = documentChunkMapper.selectOne(queryWrapper);
         if (documentChunk == null) {
             throw new BusinessException(DOCUMENT_CHUNK_NOT_FOUND_CODE, "Document chunk not found: " + id);
         }
