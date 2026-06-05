@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 2.3，文件上传限制与删除一致性已可用。
+当前阶段：Phase 2 已完成，文档元数据与文件上传链路已可用。
 
 ## 技术栈
 
@@ -68,6 +68,8 @@ mvn spring-boot:run
 默认本地文件存储路径为 `storage/documents`，可通过环境变量 `APP_STORAGE_LOCAL_ROOT` 覆盖。`storage/` 已被 `.gitignore` 忽略，不应提交本地上传文件。
 
 默认允许上传的文件后缀为 `txt,md,pdf,docx`，可通过 `APP_STORAGE_ALLOWED_EXTENSIONS` 覆盖。默认单文件最大大小为 10MB，可通过 `APP_STORAGE_MAX_FILE_SIZE_BYTES` 覆盖。
+
+Spring multipart 默认上限配置为 20MB request body 21MB，用于保证超过 10MB 的文件先进入业务校验并返回统一 `FILE_TOO_LARGE` 响应。
 
 ## 健康检查
 
@@ -138,7 +140,7 @@ curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 
 ## 文档元数据 API
 
-文档元数据接口只创建和管理文档记录，不接收 multipart 文件，也不做文档解析。
+文档元数据接口可用，只创建和管理文档记录，不接收 multipart 文件，也不做文档解析。
 
 创建文档元数据：
 
@@ -170,6 +172,8 @@ curl -X DELETE http://localhost:8080/api/documents/1
 
 ## 文件上传 API
 
+文件上传接口可用，支持 multipart 上传、本地 storage、文件类型限制、文件大小限制，以及删除 document 时同步删除本地文件。
+
 上传文件并创建文档记录：
 
 ```bash
@@ -184,6 +188,44 @@ curl -X POST http://localhost:8080/api/documents/upload \
 当前允许的默认后缀为 `txt,md,pdf,docx`。默认单文件最大大小为 10MB。
 
 本阶段不做文档解析、chunk、embedding 或向量检索。
+
+## Phase 2 链路导读
+
+Phase 2 总结文档见：
+
+```text
+docs/phase-notes/phase-002-summary.md
+```
+
+上传链路：
+
+```text
+HTTP multipart request
+  ↓
+DocumentController
+  ↓
+DocumentService
+  ↓
+LocalFileStorageService
+  ↓
+DocumentMapper
+  ↓
+document 表
+```
+
+删除链路：
+
+```text
+DELETE /api/documents/{id}
+  ↓
+DocumentController
+  ↓
+DocumentService
+  ↓
+FileStorageService.delete
+  ↓
+DocumentMapper.delete
+```
 
 ## 当前已完成
 
@@ -222,10 +264,12 @@ curl -X POST http://localhost:8080/api/documents/upload \
 - 上传保存前校验文件后缀和大小。
 - 删除 document 时同步删除本地文件。
 - 新增删除一致性测试。
+- Phase 2 收尾：文档元数据和文件上传接口已完成验证导读。
 
 ## 本轮尚未实现
 
 - 文档解析
+- `document_chunk` 表
 - chunk 切分
 - embedding
 - 向量检索
@@ -238,4 +282,4 @@ curl -X POST http://localhost:8080/api/documents/upload \
 
 ## 下一步计划
 
-进入 Phase 2.4：Phase 2 收尾、接口验证与文档上传链路导读。
+进入 Phase 3：文档解析与 chunk 切分。下一轮建议从 Phase 3.1：`document_chunk` 表、`DocumentParser` 抽象与 txt/md 解析开始。
