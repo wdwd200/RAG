@@ -6,6 +6,8 @@
 
 在已有文件上传能力基础上，本轮新增了配置化上传限制，并调整 document 删除流程：删除 document 时会先尝试删除本地 storage 文件，再删除数据库记录。
 
+Phase 2.3.1 已整理上传限制与删除一致性相关代码格式，未新增业务功能。
+
 ## 2. 新增或修改文件
 
 - `src/main/resources/application.yml`
