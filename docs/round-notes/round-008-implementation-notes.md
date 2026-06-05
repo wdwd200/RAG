@@ -8,6 +8,8 @@
 
 Phase 2.3.1 已整理上传限制与删除一致性相关代码格式，未新增业务功能。
 
+Phase 2.3.2 已使用 IDE Reformat Code 或等效格式化方式整理上传模块 Java 文件，重点修复 LocalFileStorageService 的空行和缩进问题，未新增业务功能。
+
 ## 2. 新增或修改文件
 
 - `src/main/resources/application.yml`
