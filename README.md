@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 3 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、`processingVersion` 递增、旧 chunk 软失效和失败状态记录。
+当前阶段：Phase 4.1 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机，以及 embedding 抽象、Mock Embedding 和向量维度配置。
 
 ## 技术栈
 
@@ -75,6 +75,15 @@ APP_CHUNK_OVERLAP=100
 ```
 
 `APP_CHUNK_OVERLAP` 必须小于 `APP_CHUNK_SIZE`。
+
+默认 embedding 配置：
+
+```text
+APP_EMBEDDING_PROVIDER=mock
+APP_EMBEDDING_DIMENSION=384
+```
+
+当前只提供 Mock Embedding，用于验证后续向量入库流程的代码边界。Mock 向量由文本 hash 确定性生成，同一段文本多次生成结果稳定一致；当前不连接真实 embedding API，也不写入 Qdrant。
 
 ## 健康检查
 
@@ -291,6 +300,24 @@ splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
 
 失败时 `errorMessage` 会记录清晰错误信息，不返回 Java 堆栈。
 
+## Embedding 抽象
+
+当前 embedding 调用链：
+
+```text
+EmbeddingService
+  ↓
+EmbeddingClient
+  ↓
+MockEmbeddingClient
+  ↓
+生成固定维度向量
+```
+
+`EmbeddingService` 是业务侧入口，负责文本校验和向量维度校验。`EmbeddingClient` 只表达“文本到向量”的模型适配接口。`MockEmbeddingClient` 只负责在 `app.embedding.provider=mock` 时生成确定性的伪向量，维度来自 `app.embedding.dimension`。
+
+当前没有开放 embedding HTTP 接口，也没有把 embedding 流程接入文档处理链路；文档处理成功后的状态仍然是 `CHUNKED`，不是 `INDEXED`。
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -316,12 +343,19 @@ splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
 - 失败时记录 `FAILED`、`failedStage` 和 `errorMessage`。
 - 文档处理成功主线使用事务边界，失败状态在回滚后单独落库。
 - Phase 3 收尾：已完成接口验证、处理链路导读和阶段总结文档。
+- 新增 embedding 配置 `app.embedding.provider` 和 `app.embedding.dimension`。
+- 新增 `EmbeddingProperties`。
+- 新增 `EmbeddingClient` 抽象。
+- 新增 `MockEmbeddingClient`，支持确定性固定维度 mock 向量。
+- 新增 `EmbeddingService`，作为业务侧 embedding 调用入口。
+- 新增 embedding 相关测试，覆盖维度、稳定性、空文本、batch 和 service 维度校验。
 
 ## 本阶段刻意不做
 
-- 不做 embedding。
+- 不接真实 embedding API。
 - 不写入 Qdrant。
 - 不做向量入库和向量检索。
+- 不修改 document 状态为 `INDEXED`。
 - 不做 LLM。
 - 不做 SSE。
 - 不做 Redis / Elasticsearch / RabbitMQ。
@@ -339,7 +373,8 @@ splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
 - Phase 3.2 实现说明：`docs/round-notes/round-011-implementation-notes.md`
 - Phase 3.3 实现说明：`docs/round-notes/round-012-implementation-notes.md`
 - Phase 3.4 实现说明：`docs/round-notes/round-013-implementation-notes.md`
+- Phase 4.1 实现说明：`docs/round-notes/round-014-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 4.1：EmbeddingClient 抽象、Mock Embedding 与向量维度配置。下一阶段开始进入 Embedding + Qdrant 基础建设，但当前版本还没有实现向量入库或向量检索。
+进入 Phase 4.2：Qdrant collection 初始化与 VectorStoreService 抽象。下一轮才开始处理向量库侧的 collection 和向量存储边界；当前版本仍没有实现向量入库或向量检索。

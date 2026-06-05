@@ -16,3 +16,6 @@ app:
   chunk:
     size: 8
     overlap: 2
+  embedding:
+    provider: mock
+    dimension: 8

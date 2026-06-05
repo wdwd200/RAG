@@ -1,13 +1,14 @@
 package com.example.ragbackend;
 
 import com.example.ragbackend.chunk.config.ChunkProperties;
+import com.example.ragbackend.embedding.config.EmbeddingProperties;
 import com.example.ragbackend.infrastructure.storage.StorageProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties({StorageProperties.class, ChunkProperties.class})
+@EnableConfigurationProperties({StorageProperties.class, ChunkProperties.class, EmbeddingProperties.class})
 public class RagBackendApplication {
 
     public static void main(String[] args) {

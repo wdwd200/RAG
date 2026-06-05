@@ -51,3 +51,6 @@ app:
   chunk:
     size: ${APP_CHUNK_SIZE:800}
     overlap: ${APP_CHUNK_OVERLAP:100}
+  embedding:
+    provider: ${APP_EMBEDDING_PROVIDER:mock}
+    dimension: ${APP_EMBEDDING_DIMENSION:384}
