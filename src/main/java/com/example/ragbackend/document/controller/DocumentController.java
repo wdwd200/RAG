@@ -4,6 +4,7 @@ import com.example.ragbackend.common.response.ApiResponse;
 import com.example.ragbackend.document.dto.DocumentCreateRequest;
 import com.example.ragbackend.document.dto.DocumentProcessingResponse;
 import com.example.ragbackend.document.dto.DocumentResponse;
+import com.example.ragbackend.document.service.DocumentIndexingService;
 import com.example.ragbackend.document.service.DocumentProcessingService;
 import com.example.ragbackend.document.service.DocumentService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +28,7 @@ public class DocumentController {
 
   private final DocumentService documentService;
   private final DocumentProcessingService documentProcessingService;
+  private final DocumentIndexingService documentIndexingService;
 
   @Operation(summary = "Create document metadata")
   @PostMapping("/api/documents")
@@ -54,6 +56,12 @@ public class DocumentController {
   @PostMapping("/api/documents/{id}/process")
   public ApiResponse<DocumentProcessingResponse> process(@PathVariable Long id) {
     return ApiResponse.success(documentProcessingService.process(id));
+  }
+
+  @Operation(summary = "Index document chunks into vector store")
+  @PostMapping("/api/documents/{id}/index")
+  public ApiResponse<DocumentProcessingResponse> index(@PathVariable Long id) {
+    return ApiResponse.success(documentIndexingService.index(id));
   }
 
   @Operation(summary = "List documents by knowledge base id")

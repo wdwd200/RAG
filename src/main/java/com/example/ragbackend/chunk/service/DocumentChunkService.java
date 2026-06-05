@@ -15,6 +15,8 @@ public interface DocumentChunkService {
 
     List<DocumentChunkResponse> findActiveByDocumentId(Long documentId);
 
+    void updateVectorId(Long chunkId, String vectorId);
+
     void deactivateByDocumentId(Long documentId);
 
     void deleteByDocumentId(Long documentId);

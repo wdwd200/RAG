@@ -49,6 +49,18 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
     }
 
     @Override
+    public void updateVectorId(Long chunkId, String vectorId) {
+        LambdaUpdateWrapper<DocumentChunk> updateWrapper = new LambdaUpdateWrapper<DocumentChunk>()
+                .eq(DocumentChunk::getId, chunkId)
+                .eq(DocumentChunk::getIsActive, true)
+                .set(DocumentChunk::getVectorId, vectorId);
+        int updated = documentChunkMapper.update(null, updateWrapper);
+        if (updated == 0) {
+            throw new BusinessException(DOCUMENT_CHUNK_NOT_FOUND_CODE, "Document chunk not found: " + chunkId);
+        }
+    }
+
+    @Override
     public void deactivateByDocumentId(Long documentId) {
         LambdaUpdateWrapper<DocumentChunk> updateWrapper = new LambdaUpdateWrapper<DocumentChunk>()
                 .eq(DocumentChunk::getDocumentId, documentId)

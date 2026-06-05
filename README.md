@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 4.2 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、embedding 抽象、Mock Embedding，以及 Qdrant 向量库访问层。
+当前阶段：Phase 4.3 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、embedding 抽象、Mock Embedding、Qdrant 向量库访问层，以及将已 CHUNKED 文档索引到向量库。
 
 ## 技术栈
 
@@ -96,7 +96,7 @@ QDRANT_DISTANCE=COSINE
 
 `app.qdrant.vector-size` 默认跟 `APP_EMBEDDING_DIMENSION` 保持一致。当前 mock embedding 默认维度是 384；后续切换千问 `text-embedding-v4` 时，可以把 `APP_EMBEDDING_DIMENSION` 改为 1024。
 
-`.env.qwen.example` 是后续启用千问 embedding 的配置模板。本阶段不需要真实 API key，真实 `DASHSCOPE_API_KEY` 后续 Phase 4.3 或 Phase 4.4 才需要填写，且不要提交到 Git。
+`.env.qwen.example` 是后续启用千问 embedding 的配置模板。本阶段默认仍使用 mock embedding，不读取真实 `DASHSCOPE_API_KEY`。如果本地 `.env` 或 IDEA Run Configuration 强制设置 `APP_EMBEDDING_PROVIDER=qwen`，当前版本还没有 `QwenEmbeddingClient`，应用会因为缺少 `EmbeddingClient` Bean 而无法完成真实模型调用。
 
 ## 健康检查
 
@@ -206,6 +206,28 @@ curl -X POST http://localhost:8080/api/documents/1/process
   "data": {
     "documentId": 1,
     "status": "CHUNKED",
+    "chunkCount": 3,
+    "processingVersion": 1
+  }
+}
+```
+
+将已生成 chunk 的文档写入向量库：
+
+```bash
+curl -X POST http://localhost:8080/api/documents/1/index
+```
+
+索引成功后，返回示例：
+
+```json
+{
+  "success": true,
+  "code": "OK",
+  "message": "success",
+  "data": {
+    "documentId": 1,
+    "status": "INDEXED",
     "chunkCount": 3,
     "processingVersion": 1
   }
@@ -337,7 +359,7 @@ MockEmbeddingClient
 
 `EmbeddingService` 是业务侧入口，负责文本校验和向量维度校验。`EmbeddingClient` 只表达“文本到向量”的模型适配接口。`MockEmbeddingClient` 只负责在 `app.embedding.provider=mock` 时生成确定性的伪向量，维度来自 `app.embedding.dimension`。
 
-当前没有开放 embedding HTTP 接口，也没有把 embedding 流程接入文档处理链路；文档处理成功后的状态仍然是 `CHUNKED`，不是 `INDEXED`。
+当前没有开放 embedding HTTP 接口。embedding 流程只通过 `POST /api/documents/{id}/index` 接入文档索引链路，不在 `/process` 阶段提前执行。
 
 ## VectorStore 抽象
 
@@ -355,7 +377,50 @@ Qdrant collection rag_chunks
 
 `VectorStoreService` 是业务侧向量库入口，提供 collection 初始化、单条 chunk vector upsert、向量 search、按 documentId 删除向量的能力。`QdrantVectorStoreService` 只负责把这些操作适配成 Qdrant HTTP API 请求。
 
-当前没有把 `VectorStoreService` 接入 `DocumentProcessingService`，也没有新增向量检索 API。也就是说，文档处理完成后仍停在 `CHUNKED`，不会自动进入 `INDEXED`。
+当前 `VectorStoreService` 只接入 `DocumentIndexingService`。也就是说，文档处理完成后先停在 `CHUNKED`；只有显式调用 `POST /api/documents/{id}/index` 后，才会生成 embedding、写入 Qdrant，并在成功后进入 `INDEXED`。
+
+## 文档索引调用链
+
+```text
+POST /api/documents/{id}/index
+  ↓
+DocumentController
+  ↓
+DocumentIndexingService
+  ↓
+DocumentChunkService
+  ↓
+EmbeddingService
+  ↓
+VectorStoreService.ensureCollection
+  ↓
+VectorStoreService.upsert
+  ↓
+Qdrant collection
+  ↓
+document 状态变为 INDEXED
+```
+
+索引状态流转：
+
+```text
+CHUNKED
+  ↓
+EMBEDDING
+  ↓
+INDEXING
+  ↓
+INDEXED
+```
+
+失败规则：
+
+```text
+embedding 失败：FAILED + failedStage=EMBEDDING
+Qdrant 写入失败：FAILED + failedStage=INDEXING
+```
+
+当前关系库中的 `document` 和 `document_chunk` 是事实源，Qdrant 是检索索引。如果部分 chunk 已经写入 Qdrant 后失败，本轮暂不做补偿删除，后续需要补充重建索引或补偿删除策略。
 
 ## 当前已完成
 
@@ -395,20 +460,26 @@ Qdrant collection rag_chunks
 - 新增向量层模型 `ChunkVector`、`VectorSearchRequest`、`VectorSearchResult`。
 - 新增 `GET /api/health/qdrant`，用于 Qdrant collection 初始化 / 连通性检查。
 - 新增 Qdrant 配置、向量模型、请求构造和健康检查相关测试。
+- 新增 `DocumentIndexingService`，编排 chunk embedding 和向量入库。
+- 新增 `POST /api/documents/{id}/index`。
+- active chunks 生成 embedding 后写入 `VectorStoreService`。
+- 索引成功后写回 `document_chunk.vector_id`。
+- 索引成功后 document 状态流转到 `INDEXED`。
+- embedding / Qdrant 写入失败时记录 `FAILED`、`failedStage` 和 `errorMessage`。
+- 新增文档索引相关服务测试和接口测试。
 
 ## 本阶段刻意不做
 
 - 不接真实 embedding API。
 - 不读取 `DASHSCOPE_API_KEY`。
 - 不实现 `QwenEmbeddingClient`。
-- 不做 chunk embedding 批量任务。
-- 不把 chunk 写入 Qdrant 处理链路。
 - 不实现向量检索 API。
-- 不修改 document 状态为 `INDEXED`。
 - 不做 LLM。
 - 不做 SSE。
+- 不做 reranker。
 - 不做 Redis / Elasticsearch / RabbitMQ。
 - 不做异步处理。
+- 不做分布式事务。
 - 不做复杂重试。
 - 不做 PDF / docx 解析。
 - 不做登录、JWT、Spring Security 权限系统。
@@ -424,7 +495,8 @@ Qdrant collection rag_chunks
 - Phase 3.4 实现说明：`docs/round-notes/round-013-implementation-notes.md`
 - Phase 4.1 实现说明：`docs/round-notes/round-014-implementation-notes.md`
 - Phase 4.2 实现说明：`docs/round-notes/round-015-implementation-notes.md`
+- Phase 4.3 实现说明：`docs/round-notes/round-016-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 4.3：chunk embedding、向量入库与 document 状态推进到 `INDEXED`。下一轮才把 embedding 和 VectorStore 接入文档处理链路。
+进入 Phase 4.4：向量检索 API 与 `knowledgeBaseId` 过滤。

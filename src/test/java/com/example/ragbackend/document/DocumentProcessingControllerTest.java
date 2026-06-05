@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.ragbackend.vector.service.VectorStoreService;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
@@ -40,6 +42,9 @@ class DocumentProcessingControllerTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @MockBean
+    private VectorStoreService vectorStoreService;
 
     @BeforeEach
     void cleanData() {
@@ -93,6 +98,35 @@ class DocumentProcessingControllerTest {
                 .andExpect(jsonPath("$.data.documentId").value(documentId))
                 .andExpect(jsonPath("$.data.contentHash").isNotEmpty())
                 .andExpect(jsonPath("$.data.isActive").value(true));
+    }
+
+    @Test
+    void indexesProcessedDocumentThroughApi() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadFile(knowledgeBaseId, "index-me.txt", "abcdefghijklmnopqrst");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CHUNKED"))
+                .andExpect(jsonPath("$.data.chunkCount").value(3));
+
+        mockMvc.perform(post("/api/documents/{id}/index", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.documentId").value(documentId))
+                .andExpect(jsonPath("$.data.status").value("INDEXED"))
+                .andExpect(jsonPath("$.data.chunkCount").value(3))
+                .andExpect(jsonPath("$.data.processingVersion").value(1));
+
+        mockMvc.perform(get("/api/documents/{id}", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("INDEXED"));
+
+        mockMvc.perform(get("/api/documents/{documentId}/chunks", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andExpect(jsonPath("$.data[0].vectorId").isNotEmpty());
     }
 
     @Test
