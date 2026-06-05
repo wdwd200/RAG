@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 3.3 已完成。本阶段补强了文档处理状态机、`processingVersion` 递增规则、旧 chunk 软失效规则、失败状态记录和处理事务边界。
+当前阶段：Phase 3 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、`processingVersion` 递增、旧 chunk 软失效和失败状态记录。
 
 ## 技术栈
 
@@ -315,6 +315,7 @@ splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
 - 重复处理时旧 chunk 改为软失效，新 chunk 保持 active。
 - 失败时记录 `FAILED`、`failedStage` 和 `errorMessage`。
 - 文档处理成功主线使用事务边界，失败状态在回滚后单独落库。
+- Phase 3 收尾：已完成接口验证、处理链路导读和阶段总结文档。
 
 ## 本阶段刻意不做
 
@@ -333,10 +334,12 @@ splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
 
 - Phase 1 总结：`docs/phase-notes/phase-001-summary.md`
 - Phase 2 总结：`docs/phase-notes/phase-002-summary.md`
+- Phase 3 总结：`docs/phase-notes/phase-003-summary.md`
 - Phase 3.1 实现说明：`docs/round-notes/round-010-implementation-notes.md`
 - Phase 3.2 实现说明：`docs/round-notes/round-011-implementation-notes.md`
 - Phase 3.3 实现说明：`docs/round-notes/round-012-implementation-notes.md`
+- Phase 3.4 实现说明：`docs/round-notes/round-013-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 3.4：Phase 3 收尾、处理链路接口验证与导读整理。
+进入 Phase 4.1：EmbeddingClient 抽象、Mock Embedding 与向量维度配置。下一阶段开始进入 Embedding + Qdrant 基础建设，但当前版本还没有实现向量入库或向量检索。
