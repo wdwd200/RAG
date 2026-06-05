@@ -108,7 +108,8 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public void deleteById(Long id) {
-        getExistingDocument(id);
+        Document document = getExistingDocument(id);
+        fileStorageService.delete(document.getStoragePath());
         documentMapper.deleteById(id);
     }
 

@@ -42,3 +42,5 @@ management:
 app:
   storage:
     local-root: ${APP_STORAGE_LOCAL_ROOT:storage/documents}
+    allowed-extensions: ${APP_STORAGE_ALLOWED_EXTENSIONS:txt,md,pdf,docx}
+    max-file-size-bytes: ${APP_STORAGE_MAX_FILE_SIZE_BYTES:10485760}

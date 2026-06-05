@@ -171,6 +171,68 @@ class DocumentControllerTest {
     }
 
     @Test
+    void uploadsMarkdownFileAndCreatesDocumentMetadata() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "notes.md",
+                "text/markdown",
+                "hello md".getBytes(StandardCharsets.UTF_8)
+        );
+
+        mockMvc.perform(multipart("/api/documents/upload")
+                        .file(file)
+                        .param("knowledgeBaseId", knowledgeBaseId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.fileName").value("notes.md"))
+                .andExpect(jsonPath("$.data.fileType").value("md"))
+                .andExpect(jsonPath("$.data.fileSize").value(8))
+                .andExpect(jsonPath("$.data.status").value("UPLOADED"))
+                .andExpect(jsonPath("$.data.createdBy").value(1));
+    }
+
+    @Test
+    void returnsErrorWhenUploadingUnsupportedExtension() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "script.exe",
+                "application/octet-stream",
+                "content".getBytes(StandardCharsets.UTF_8)
+        );
+
+        mockMvc.perform(multipart("/api/documents/upload")
+                        .file(file)
+                        .param("knowledgeBaseId", knowledgeBaseId.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("FILE_TYPE_NOT_ALLOWED"));
+
+        assertThat(TEST_STORAGE_ROOT).doesNotExist();
+    }
+
+    @Test
+    void returnsErrorWhenUploadingFileOverSizeLimit() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "large.txt",
+                "text/plain",
+                "123456789012345678901".getBytes(StandardCharsets.UTF_8)
+        );
+
+        mockMvc.perform(multipart("/api/documents/upload")
+                        .file(file)
+                        .param("knowledgeBaseId", knowledgeBaseId.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("FILE_TOO_LARGE"));
+
+        assertThat(TEST_STORAGE_ROOT).doesNotExist();
+    }
+
+    @Test
     void returnsErrorWhenUploadingEmptyFile() throws Exception {
         Long knowledgeBaseId = createKnowledgeBase();
         MockMultipartFile file = new MockMultipartFile(
@@ -205,6 +267,40 @@ class DocumentControllerTest {
                 .andExpect(jsonPath("$.code").value("KNOWLEDGE_BASE_NOT_FOUND"));
     }
 
+    @Test
+    void deletesStoredFileWhenDeletingDocument() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadTextFile(knowledgeBaseId, "delete-me.txt", "delete me");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+        Path storedFile = TEST_STORAGE_ROOT.resolve(uploadedDocument.at("/data/storagePath").asText());
+
+        assertThat(storedFile).exists();
+
+        mockMvc.perform(delete("/api/documents/{id}", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        assertThat(storedFile).doesNotExist();
+    }
+
+    @Test
+    void deletesDocumentWhenStoredFileAlreadyMissing() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadTextFile(knowledgeBaseId, "missing-file.txt", "missing");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+        Path storedFile = TEST_STORAGE_ROOT.resolve(uploadedDocument.at("/data/storagePath").asText());
+
+        Files.delete(storedFile);
+
+        mockMvc.perform(delete("/api/documents/{id}", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(get("/api/documents/{id}", documentId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("DOCUMENT_NOT_FOUND"));
+    }
+
     private Long createKnowledgeBase() throws Exception {
         MvcResult result = mockMvc.perform(post("/api/knowledge-bases")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -221,6 +317,23 @@ class DocumentControllerTest {
 
         JsonNode response = objectMapper.readTree(result.getResponse().getContentAsString());
         return response.at("/data/id").asLong();
+    }
+
+    private JsonNode uploadTextFile(Long knowledgeBaseId, String fileName, String content) throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                fileName,
+                "text/plain",
+                content.getBytes(StandardCharsets.UTF_8)
+        );
+
+        MvcResult result = mockMvc.perform(multipart("/api/documents/upload")
+                        .file(file)
+                        .param("knowledgeBaseId", knowledgeBaseId.toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        return objectMapper.readTree(result.getResponse().getContentAsString());
     }
 
     private Long createDocument(Long knowledgeBaseId, String fileName) throws Exception {

@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 2.2，文件上传接口与本地 storage 已可用。
+当前阶段：Phase 2.3，文件上传限制与删除一致性已可用。
 
 ## 技术栈
 
@@ -66,6 +66,8 @@ mvn spring-boot:run
 默认服务端口为 `8080`，可通过环境变量 `SERVER_PORT` 或 `src/main/resources/application.yml` 中的 `server.port` 调整。
 
 默认本地文件存储路径为 `storage/documents`，可通过环境变量 `APP_STORAGE_LOCAL_ROOT` 覆盖。`storage/` 已被 `.gitignore` 忽略，不应提交本地上传文件。
+
+默认允许上传的文件后缀为 `txt,md,pdf,docx`，可通过 `APP_STORAGE_ALLOWED_EXTENSIONS` 覆盖。默认单文件最大大小为 10MB，可通过 `APP_STORAGE_MAX_FILE_SIZE_BYTES` 覆盖。
 
 ## 健康检查
 
@@ -164,6 +166,8 @@ curl http://localhost:8080/api/knowledge-bases/1/documents
 curl -X DELETE http://localhost:8080/api/documents/1
 ```
 
+删除 document 时，如果记录中存在 `storagePath`，系统会先尝试删除对应的本地文件，再删除数据库记录。本地文件已不存在时，删除 document 仍可成功。
+
 ## 文件上传 API
 
 上传文件并创建文档记录：
@@ -177,7 +181,9 @@ curl -X POST http://localhost:8080/api/documents/upload \
 
 上传成功后，原始文件会保存到本地 storage，接口会返回 document 记录，状态为 `UPLOADED`。
 
-本阶段不做文件类型白名单、文件大小限制、文档解析、chunk、embedding 或向量检索。
+当前允许的默认后缀为 `txt,md,pdf,docx`。默认单文件最大大小为 10MB。
+
+本阶段不做文档解析、chunk、embedding 或向量检索。
 
 ## 当前已完成
 
@@ -211,12 +217,14 @@ curl -X POST http://localhost:8080/api/documents/upload \
 - 新增文件上传接口 `POST /api/documents/upload`。
 - 上传成功后保存原始文件并创建 document 记录。
 - 新增文件上传接口测试。
+- 新增上传文件类型限制配置。
+- 新增上传文件大小限制配置。
+- 上传保存前校验文件后缀和大小。
+- 删除 document 时同步删除本地文件。
+- 新增删除一致性测试。
 
 ## 本轮尚未实现
 
-- 文件类型白名单
-- 文件大小限制
-- 删除 document 时同步删除本地文件
 - 文档解析
 - chunk 切分
 - embedding
@@ -230,4 +238,4 @@ curl -X POST http://localhost:8080/api/documents/upload \
 
 ## 下一步计划
 
-进入 Phase 2.3：文件类型、大小限制与删除一致性。
+进入 Phase 2.4：Phase 2 收尾、接口验证与文档上传链路导读。
