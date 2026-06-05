@@ -23,19 +23,31 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
 public class DocumentProcessingServiceImpl implements DocumentProcessingService {
 
     private static final String DOCUMENT_NOT_FOUND_CODE = "DOCUMENT_NOT_FOUND";
+    private static final String DOCUMENT_PROCESS_NOT_ALLOWED_CODE = "DOCUMENT_PROCESS_NOT_ALLOWED";
     private static final String DOCUMENT_FILE_NOT_FOUND_CODE = "DOCUMENT_FILE_NOT_FOUND";
     private static final String DOCUMENT_FILE_PATH_INVALID_CODE = "DOCUMENT_FILE_PATH_INVALID";
     private static final String DOCUMENT_PROCESSING_EMPTY_CHUNKS_CODE = "DOCUMENT_PROCESSING_EMPTY_CHUNKS";
+    private static final Set<DocumentStatus> PROCESS_ALLOWED_STATUSES = EnumSet.of(
+            DocumentStatus.UPLOADED,
+            DocumentStatus.FAILED,
+            DocumentStatus.PARSED,
+            DocumentStatus.CHUNKED
+    );
 
     private final DocumentMapper documentMapper;
     private final DocumentParserRegistry documentParserRegistry;
@@ -43,50 +55,65 @@ public class DocumentProcessingServiceImpl implements DocumentProcessingService 
     private final DocumentChunkService documentChunkService;
     private final StorageProperties storageProperties;
     private final ChunkProperties chunkProperties;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     public DocumentProcessingResponse process(Long documentId) {
         Document document = getExistingDocument(documentId);
-        String failedStage = DocumentStatus.PARSING.name();
+        DocumentStatus originalStatus = parseStatus(document);
+        validateProcessAllowed(document, originalStatus);
+        int processingVersion = nextProcessingVersion(document, originalStatus);
+        AtomicReference<String> failedStage = new AtomicReference<>(DocumentStatus.PARSING.name());
 
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
         try {
-            updateStatus(document, DocumentStatus.PARSING);
-            Path filePath = resolveStoredFile(document);
-
-            ParsedDocument parsedDocument = documentParserRegistry.parse(document.getFileType(), filePath);
-
-            updateStatus(document, DocumentStatus.PARSED);
-            failedStage = DocumentStatus.CHUNKING.name();
-            updateStatus(document, DocumentStatus.CHUNKING);
-
-            List<TextChunk> textChunks = textSplitter.split(
-                    parsedDocument.content(),
-                    new SplitOptions(chunkProperties.getSize(), chunkProperties.getOverlap())
-            );
-            if (textChunks.isEmpty()) {
-                throw new BusinessException(
-                        DOCUMENT_PROCESSING_EMPTY_CHUNKS_CODE,
-                        "Document processing produced no chunks: " + documentId
-                );
-            }
-
-            documentChunkService.deleteByDocumentId(document.getId());
-            for (TextChunk textChunk : textChunks) {
-                documentChunkService.create(toDocumentChunk(document, textChunk));
-            }
-
-            updateChunked(document, textChunks.size());
-
-            return new DocumentProcessingResponse(
-                    document.getId(),
-                    document.getStatus(),
-                    document.getChunkCount(),
-                    document.getProcessingVersion()
+            return transactionTemplate.execute(status ->
+                    processInTransaction(documentId, processingVersion, failedStage)
             );
         } catch (RuntimeException ex) {
-            markFailed(document.getId(), failedStage, ex);
+            markFailed(documentId, failedStage.get(), ex);
             throw ex;
         }
+    }
+
+    private DocumentProcessingResponse processInTransaction(
+            Long documentId, int processingVersion, AtomicReference<String> failedStage) {
+        Document document = getExistingDocument(documentId);
+        document.setProcessingVersion(processingVersion);
+
+        updateStatus(document, DocumentStatus.PARSING);
+        Path filePath = resolveStoredFile(document);
+
+        ParsedDocument parsedDocument = documentParserRegistry.parse(document.getFileType(), filePath);
+
+        updateStatus(document, DocumentStatus.PARSED);
+        failedStage.set(DocumentStatus.CHUNKING.name());
+        updateStatus(document, DocumentStatus.CHUNKING);
+
+        List<TextChunk> textChunks = textSplitter.split(
+                parsedDocument.content(),
+                new SplitOptions(chunkProperties.getSize(), chunkProperties.getOverlap())
+        );
+        if (textChunks.isEmpty()) {
+            throw new BusinessException(
+                    DOCUMENT_PROCESSING_EMPTY_CHUNKS_CODE,
+                    "Document processing produced no chunks: " + documentId
+            );
+        }
+
+        documentChunkService.deactivateByDocumentId(document.getId());
+        for (TextChunk textChunk : textChunks) {
+            documentChunkService.create(toDocumentChunk(document, textChunk));
+        }
+
+        updateChunked(document, textChunks.size());
+
+        return new DocumentProcessingResponse(
+                document.getId(),
+                document.getStatus(),
+                document.getChunkCount(),
+                document.getProcessingVersion()
+        );
     }
 
     private Document getExistingDocument(Long documentId) {
@@ -95,6 +122,37 @@ public class DocumentProcessingServiceImpl implements DocumentProcessingService 
             throw new BusinessException(DOCUMENT_NOT_FOUND_CODE, "Document not found: " + documentId);
         }
         return document;
+    }
+
+    private DocumentStatus parseStatus(Document document) {
+        try {
+            return DocumentStatus.valueOf(document.getStatus());
+        } catch (RuntimeException ex) {
+            throw new BusinessException(
+                    DOCUMENT_PROCESS_NOT_ALLOWED_CODE,
+                    "Document status is not allowed for processing: " + document.getStatus()
+            );
+        }
+    }
+
+    private void validateProcessAllowed(Document document, DocumentStatus status) {
+        if (!PROCESS_ALLOWED_STATUSES.contains(status)) {
+            throw new BusinessException(
+                    DOCUMENT_PROCESS_NOT_ALLOWED_CODE,
+                    "Document status is not allowed for processing: "
+                            + status.name()
+                            + ", documentId: "
+                            + document.getId()
+            );
+        }
+    }
+
+    private int nextProcessingVersion(Document document, DocumentStatus originalStatus) {
+        int currentVersion = document.getProcessingVersion() == null ? 1 : document.getProcessingVersion();
+        if (originalStatus == DocumentStatus.UPLOADED) {
+            return currentVersion;
+        }
+        return currentVersion + 1;
     }
 
     private Path resolveStoredFile(Document document) {
@@ -142,6 +200,7 @@ public class DocumentProcessingServiceImpl implements DocumentProcessingService 
         LambdaUpdateWrapper<Document> updateWrapper = new LambdaUpdateWrapper<Document>()
                 .eq(Document::getId, document.getId())
                 .set(Document::getStatus, status.name())
+                .set(Document::getProcessingVersion, document.getProcessingVersion())
                 .set(Document::getFailedStage, null)
                 .set(Document::getErrorMessage, null)
                 .set(Document::getUpdatedAt, now);
@@ -159,6 +218,7 @@ public class DocumentProcessingServiceImpl implements DocumentProcessingService 
                 .eq(Document::getId, document.getId())
                 .set(Document::getStatus, DocumentStatus.CHUNKED.name())
                 .set(Document::getChunkCount, chunkCount)
+                .set(Document::getProcessingVersion, document.getProcessingVersion())
                 .set(Document::getFailedStage, null)
                 .set(Document::getErrorMessage, null)
                 .set(Document::getUpdatedAt, now);
@@ -172,17 +232,20 @@ public class DocumentProcessingServiceImpl implements DocumentProcessingService 
     }
 
     private void markFailed(Long documentId, String failedStage, RuntimeException ex) {
-        if (documentMapper.selectById(documentId) == null) {
-            return;
-        }
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+        transactionTemplate.executeWithoutResult(status -> {
+            if (documentMapper.selectById(documentId) == null) {
+                return;
+            }
 
-        LambdaUpdateWrapper<Document> updateWrapper = new LambdaUpdateWrapper<Document>()
-                .eq(Document::getId, documentId)
-                .set(Document::getStatus, DocumentStatus.FAILED.name())
-                .set(Document::getFailedStage, failedStage)
-                .set(Document::getErrorMessage, errorMessage(ex))
-                .set(Document::getUpdatedAt, LocalDateTime.now());
-        documentMapper.update(null, updateWrapper);
+            LambdaUpdateWrapper<Document> updateWrapper = new LambdaUpdateWrapper<Document>()
+                    .eq(Document::getId, documentId)
+                    .set(Document::getStatus, DocumentStatus.FAILED.name())
+                    .set(Document::getFailedStage, failedStage)
+                    .set(Document::getErrorMessage, errorMessage(ex))
+                    .set(Document::getUpdatedAt, LocalDateTime.now());
+            documentMapper.update(null, updateWrapper);
+        });
     }
 
     private String errorMessage(RuntimeException ex) {

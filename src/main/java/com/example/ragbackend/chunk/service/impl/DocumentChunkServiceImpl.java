@@ -1,13 +1,13 @@
 package com.example.ragbackend.chunk.service.impl;
 
-import java.util.List;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.example.ragbackend.chunk.dto.DocumentChunkResponse;
 import com.example.ragbackend.chunk.entity.DocumentChunk;
 import com.example.ragbackend.chunk.mapper.DocumentChunkMapper;
 import com.example.ragbackend.chunk.service.DocumentChunkService;
 import com.example.ragbackend.common.exception.BusinessException;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +32,11 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
 
     @Override
     public List<DocumentChunkResponse> findByDocumentId(Long documentId) {
+        return findActiveByDocumentId(documentId);
+    }
+
+    @Override
+    public List<DocumentChunkResponse> findActiveByDocumentId(Long documentId) {
         LambdaQueryWrapper<DocumentChunk> queryWrapper = new LambdaQueryWrapper<DocumentChunk>()
                 .eq(DocumentChunk::getDocumentId, documentId)
                 .eq(DocumentChunk::getIsActive, true)
@@ -41,6 +46,15 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
                 .stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    @Override
+    public void deactivateByDocumentId(Long documentId) {
+        LambdaUpdateWrapper<DocumentChunk> updateWrapper = new LambdaUpdateWrapper<DocumentChunk>()
+                .eq(DocumentChunk::getDocumentId, documentId)
+                .eq(DocumentChunk::getIsActive, true)
+                .set(DocumentChunk::getIsActive, false);
+        documentChunkMapper.update(null, updateWrapper);
     }
 
     @Override

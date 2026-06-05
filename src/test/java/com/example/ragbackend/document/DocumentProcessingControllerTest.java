@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -112,11 +113,67 @@ class DocumentProcessingControllerTest {
     }
 
     @Test
+    void reprocessesChunkedDocumentWithNextProcessingVersionAndInactiveOldChunks() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadFile(knowledgeBaseId, "reprocess.txt", "abcdefghijklmnopqrst");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CHUNKED"))
+                .andExpect(jsonPath("$.data.processingVersion").value(1));
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CHUNKED"))
+                .andExpect(jsonPath("$.data.chunkCount").value(3))
+                .andExpect(jsonPath("$.data.processingVersion").value(2));
+
+        assertThat(chunkCount(documentId, true, 2)).isEqualTo(3);
+        assertThat(chunkCount(documentId, false, 1)).isEqualTo(3);
+
+        mockMvc.perform(get("/api/documents/{documentId}/chunks", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3))
+                .andExpect(jsonPath("$.data[0].processingVersion").value(2))
+                .andExpect(jsonPath("$.data[0].isActive").value(true));
+    }
+
+    @Test
     void returnsErrorWhenProcessingMissingDocument() throws Exception {
         mockMvc.perform(post("/api/documents/{id}/process", 999999L))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("DOCUMENT_NOT_FOUND"));
+    }
+
+    @Test
+    void missingStoredFileMarksDocumentFailedAtParsingAndCanRetry() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadFile(knowledgeBaseId, "missing.txt", "abcdefgh");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+        Path storedFile = TEST_STORAGE_ROOT.resolve(uploadedDocument.at("/data/storagePath").asText());
+
+        Files.delete(storedFile);
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("DOCUMENT_FILE_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/documents/{id}", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAILED"))
+                .andExpect(jsonPath("$.data.failedStage").value("PARSING"))
+                .andExpect(jsonPath("$.data.errorMessage").isNotEmpty());
+
+        Files.createDirectories(storedFile.getParent());
+        Files.writeString(storedFile, "abcdefgh", StandardCharsets.UTF_8);
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CHUNKED"))
+                .andExpect(jsonPath("$.data.processingVersion").value(2));
     }
 
     @Test
@@ -135,6 +192,23 @@ class DocumentProcessingControllerTest {
                 .andExpect(jsonPath("$.data.status").value("FAILED"))
                 .andExpect(jsonPath("$.data.failedStage").value("PARSING"))
                 .andExpect(jsonPath("$.data.errorMessage").isNotEmpty());
+    }
+
+    @Test
+    void indexedDocumentIsNotAllowedToProcess() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        JsonNode uploadedDocument = uploadFile(knowledgeBaseId, "indexed.txt", "abcdefgh");
+        Long documentId = uploadedDocument.at("/data/id").asLong();
+        jdbcTemplate.update("UPDATE document SET status = 'INDEXED' WHERE id = ?", documentId);
+
+        mockMvc.perform(post("/api/documents/{id}/process", documentId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("DOCUMENT_PROCESS_NOT_ALLOWED"));
+
+        mockMvc.perform(get("/api/documents/{id}", documentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("INDEXED"));
     }
 
     @Test
@@ -178,5 +252,21 @@ class DocumentProcessingControllerTest {
                 .andReturn();
 
         return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    private Integer chunkCount(Long documentId, boolean active, int processingVersion) {
+        return jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM document_chunk
+                WHERE document_id = ?
+                  AND is_active = ?
+                  AND processing_version = ?
+                """,
+                Integer.class,
+                documentId,
+                active,
+                processingVersion
+        );
     }
 }

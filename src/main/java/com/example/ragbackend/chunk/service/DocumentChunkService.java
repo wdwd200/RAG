@@ -13,5 +13,9 @@ public interface DocumentChunkService {
 
     List<DocumentChunkResponse> findByDocumentId(Long documentId);
 
+    List<DocumentChunkResponse> findActiveByDocumentId(Long documentId);
+
+    void deactivateByDocumentId(Long documentId);
+
     void deleteByDocumentId(Long documentId);
 }

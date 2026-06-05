@@ -21,7 +21,7 @@ public class DocumentChunkController {
     @Operation(summary = "List active chunks by document id")
     @GetMapping("/api/documents/{documentId}/chunks")
     public ApiResponse<List<DocumentChunkResponse>> findByDocumentId(@PathVariable Long documentId) {
-        return ApiResponse.success(documentChunkService.findByDocumentId(documentId));
+        return ApiResponse.success(documentChunkService.findActiveByDocumentId(documentId));
     }
 
     @Operation(summary = "Get active chunk by id")

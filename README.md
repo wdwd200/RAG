@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 3.2 已完成。本阶段新增固定窗口文本切分、文档处理服务、文档处理接口和 chunk 查询接口。已上传的 txt/md 文档可以同步处理为 `document_chunk` 数据，处理成功后 document 状态为 `CHUNKED`。
+当前阶段：Phase 3.3 已完成。本阶段补强了文档处理状态机、`processingVersion` 递增规则、旧 chunk 软失效规则、失败状态记录和处理事务边界。
 
 ## 技术栈
 
@@ -225,11 +225,17 @@ DocumentController
   ↓
 DocumentProcessingService
   ↓
+状态校验
+  ↓
+processingVersion 准备
+  ↓
 DocumentParserRegistry
   ↓
 TxtDocumentParser / MarkdownDocumentParser
   ↓
 TextSplitter
+  ↓
+旧 chunk 软失效
   ↓
 DocumentChunkService
   ↓
@@ -242,7 +248,48 @@ document_chunk 表
 
 当前 splitter 使用固定窗口切分，支持 `chunkSize` 和 `overlap`。`tokenCount` 使用简单估算，不做精准 token 计算。
 
-重复处理同一文档时，当前实现会先删除该 document 下旧 chunk，再插入新 chunk。处理成功后的最终状态是 `CHUNKED`，不是 `INDEXED`。
+重复处理同一文档时，当前实现会先把该 document 下旧 active chunk 标记为 inactive，再插入新 chunk。chunk 查询接口只返回 active chunk。处理成功后的最终状态是 `CHUNKED`，不是 `INDEXED`。
+
+## 文档处理状态机规则
+
+允许调用 `POST /api/documents/{id}/process` 的状态：
+
+```text
+UPLOADED
+FAILED
+PARSED
+CHUNKED
+```
+
+不允许调用 process 的状态：
+
+```text
+PARSING
+CHUNKING
+EMBEDDING
+INDEXING
+INDEXED
+```
+
+不允许处理时返回 `DOCUMENT_PROCESS_NOT_ALLOWED`，不会静默处理，也不会把 `INDEXED` 文档重新切分。
+
+`processingVersion` 规则：
+
+```text
+UPLOADED 首次处理：沿用 document 当前 processingVersion，通常是 1
+FAILED / PARSED / CHUNKED 重新处理：processingVersion + 1
+新生成 chunk 的 processingVersion 与 document.processingVersion 一致
+```
+
+失败状态记录规则：
+
+```text
+文件不存在：FAILED + failedStage=PARSING
+不支持文件类型：FAILED + failedStage=PARSING
+splitter 参数错误或切分失败：FAILED + failedStage=CHUNKING
+```
+
+失败时 `errorMessage` 会记录清晰错误信息，不返回 Java 堆栈。
 
 ## 当前已完成
 
@@ -263,6 +310,11 @@ document_chunk 表
 - 新增 `POST /api/documents/{id}/process`。
 - 新增 `GET /api/documents/{documentId}/chunks` 和 `GET /api/chunks/{id}`。
 - 新增 parser、splitter、chunk 和文档处理相关测试。
+- 补强 process 可处理状态规则，禁止处理 `PARSING`、`CHUNKING`、`EMBEDDING`、`INDEXING`、`INDEXED`。
+- 补强 `processingVersion` 递增规则，重新处理时版本递增。
+- 重复处理时旧 chunk 改为软失效，新 chunk 保持 active。
+- 失败时记录 `FAILED`、`failedStage` 和 `errorMessage`。
+- 文档处理成功主线使用事务边界，失败状态在回滚后单独落库。
 
 ## 本阶段刻意不做
 
@@ -283,7 +335,8 @@ document_chunk 表
 - Phase 2 总结：`docs/phase-notes/phase-002-summary.md`
 - Phase 3.1 实现说明：`docs/round-notes/round-010-implementation-notes.md`
 - Phase 3.2 实现说明：`docs/round-notes/round-011-implementation-notes.md`
+- Phase 3.3 实现说明：`docs/round-notes/round-012-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 3.3：处理失败状态、重新处理与文档状态机补强。
+进入 Phase 3.4：Phase 3 收尾、处理链路接口验证与导读整理。
