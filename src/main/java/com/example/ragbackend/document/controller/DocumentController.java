@@ -1,12 +1,10 @@
 package com.example.ragbackend.document.controller;
 
 import java.util.List;
-
 import com.example.ragbackend.common.response.ApiResponse;
 import com.example.ragbackend.document.dto.DocumentCreateRequest;
 import com.example.ragbackend.document.dto.DocumentResponse;
 import com.example.ragbackend.document.service.DocumentService;
-
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;

@@ -6,6 +6,8 @@
 
 本轮在已有 document 元数据模块基础上，新增 multipart 上传接口，将原始文件保存到本地 storage，并创建 document 记录。
 
+Phase 2.2.1 仅整理 Phase 2.2 上传模块代码格式、空行和文档可读性，没有新增业务功能。
+
 本轮不做文件类型白名单、不做文件大小限制、不做删除 document 时同步删除本地文件、不做文档解析、不做 chunk、不做 embedding、不接入 Qdrant、不做向量检索、不接入 LLM。
 
 ## 2. 新增或修改文件
