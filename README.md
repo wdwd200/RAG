@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 1 已完成，`knowledge_base` 最小 CRUD API 已可用。
+当前阶段：Phase 2.1，`document` 表与文档元数据 API 已可用。
 
 ## 技术栈
 
@@ -94,7 +94,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口和知识库 CRUD 接口。
+当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口和文档元数据接口。
 
 ## 知识库 CRUD API
 
@@ -132,6 +132,36 @@ curl -X PUT http://localhost:8080/api/knowledge-bases/1 \
 curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 ```
 
+## 文档元数据 API
+
+本阶段的文档接口只创建和管理文档元数据，不接收 multipart 文件，也不做文档解析。
+
+创建文档元数据：
+
+```bash
+curl -X POST http://localhost:8080/api/documents \
+  -H "Content-Type: application/json" \
+  -d '{"knowledgeBaseId":1,"fileName":"demo.pdf","fileType":"pdf","fileSize":1024,"storagePath":"documents/demo.pdf","createdBy":1}'
+```
+
+查询单个文档元数据：
+
+```bash
+curl http://localhost:8080/api/documents/1
+```
+
+查询某个知识库下的文档元数据列表：
+
+```bash
+curl http://localhost:8080/api/knowledge-bases/1/documents
+```
+
+删除文档元数据：
+
+```bash
+curl -X DELETE http://localhost:8080/api/documents/1
+```
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -154,12 +184,18 @@ curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 - 新增 `KnowledgeBaseController`。
 - 新增 `knowledge_base` 最小 REST CRUD API。
 - 新增知识库 CRUD API 测试。
+- 新增 `document` 表 migration：`V3__create_document_table.sql`。
+- 新增文档状态枚举 `DocumentStatus`。
+- 新增 `Document` Entity、Mapper、Service 和 Controller。
+- 新增文档元数据 API。
+- 新增文档元数据接口测试。
 
 ## 本轮尚未实现
 
 - 文档上传
+- multipart 文件接收
+- 本地文件 storage
 - 文档解析
-- `document` 表
 - chunk 切分
 - embedding
 - 向量检索
@@ -172,6 +208,4 @@ curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 
 ## 下一步计划
 
-进入 Phase 2：文档上传与文档元数据。
-
-下一步建议先做 Phase 2.1：`document` 表、文档状态枚举与文档元数据基础。
+进入 Phase 2.2：文件上传接口与本地 storage。

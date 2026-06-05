@@ -4,6 +4,9 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@MapperScan("com.example.ragbackend.knowledge.mapper")
+@MapperScan({
+        "com.example.ragbackend.knowledge.mapper",
+        "com.example.ragbackend.document.mapper"
+})
 public class MybatisPlusConfig {
 }
