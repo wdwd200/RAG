@@ -19,3 +19,9 @@ app:
   embedding:
     provider: mock
     dimension: 8
+  qdrant:
+    host: localhost
+    http-port: 6333
+    collection-name: rag_chunks_test
+    vector-size: 8
+    distance: COSINE

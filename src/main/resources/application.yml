@@ -54,3 +54,9 @@ app:
   embedding:
     provider: ${APP_EMBEDDING_PROVIDER:mock}
     dimension: ${APP_EMBEDDING_DIMENSION:384}
+  qdrant:
+    host: ${QDRANT_HOST:localhost}
+    http-port: ${QDRANT_HTTP_PORT:6333}
+    collection-name: ${QDRANT_COLLECTION_NAME:rag_chunks}
+    vector-size: ${APP_EMBEDDING_DIMENSION:384}
+    distance: ${QDRANT_DISTANCE:COSINE}

@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 4.1 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机，以及 embedding 抽象、Mock Embedding 和向量维度配置。
+当前阶段：Phase 4.2 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、embedding 抽象、Mock Embedding，以及 Qdrant 向量库访问层。
 
 ## 技术栈
 
@@ -83,7 +83,20 @@ APP_EMBEDDING_PROVIDER=mock
 APP_EMBEDDING_DIMENSION=384
 ```
 
-当前只提供 Mock Embedding，用于验证后续向量入库流程的代码边界。Mock 向量由文本 hash 确定性生成，同一段文本多次生成结果稳定一致；当前不连接真实 embedding API，也不写入 Qdrant。
+当前只提供 Mock Embedding，用于验证后续向量入库流程的代码边界。Mock 向量由文本 hash 确定性生成，同一段文本多次生成结果稳定一致；当前不连接真实 embedding API。
+
+默认 Qdrant 配置：
+
+```text
+QDRANT_HOST=localhost
+QDRANT_HTTP_PORT=6333
+QDRANT_COLLECTION_NAME=rag_chunks
+QDRANT_DISTANCE=COSINE
+```
+
+`app.qdrant.vector-size` 默认跟 `APP_EMBEDDING_DIMENSION` 保持一致。当前 mock embedding 默认维度是 384；后续切换千问 `text-embedding-v4` 时，可以把 `APP_EMBEDDING_DIMENSION` 改为 1024。
+
+`.env.qwen.example` 是后续启用千问 embedding 的配置模板。本阶段不需要真实 API key，真实 `DASHSCOPE_API_KEY` 后续 Phase 4.3 或 Phase 4.4 才需要填写，且不要提交到 Git。
 
 ## 健康检查
 
@@ -99,6 +112,14 @@ curl http://localhost:8080/api/health
 curl http://localhost:8080/api/health/database
 ```
 
+Qdrant collection 初始化 / 连通性检查：
+
+```bash
+curl http://localhost:8080/api/health/qdrant
+```
+
+该接口会调用 `VectorStoreService.ensureCollection()`，如果 collection 不存在会尝试创建。Qdrant 未启动时返回的 `data.status` 会是 `DOWN`。
+
 Actuator 健康检查：
 
 ```bash
@@ -112,7 +133,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口、文档元数据接口、文件上传接口、文档处理接口和 chunk 查询接口。
+当前 Swagger 页面能看到健康检查接口、Qdrant 健康检查接口、知识库 CRUD 接口、文档元数据接口、文件上传接口、文档处理接口和 chunk 查询接口。
 
 ## 知识库 CRUD API
 
@@ -318,6 +339,24 @@ MockEmbeddingClient
 
 当前没有开放 embedding HTTP 接口，也没有把 embedding 流程接入文档处理链路；文档处理成功后的状态仍然是 `CHUNKED`，不是 `INDEXED`。
 
+## VectorStore 抽象
+
+当前 VectorStore 调用链：
+
+```text
+未来业务服务
+  ↓
+VectorStoreService
+  ↓
+QdrantVectorStoreService
+  ↓
+Qdrant collection rag_chunks
+```
+
+`VectorStoreService` 是业务侧向量库入口，提供 collection 初始化、单条 chunk vector upsert、向量 search、按 documentId 删除向量的能力。`QdrantVectorStoreService` 只负责把这些操作适配成 Qdrant HTTP API 请求。
+
+当前没有把 `VectorStoreService` 接入 `DocumentProcessingService`，也没有新增向量检索 API。也就是说，文档处理完成后仍停在 `CHUNKED`，不会自动进入 `INDEXED`。
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -349,12 +388,22 @@ MockEmbeddingClient
 - 新增 `MockEmbeddingClient`，支持确定性固定维度 mock 向量。
 - 新增 `EmbeddingService`，作为业务侧 embedding 调用入口。
 - 新增 embedding 相关测试，覆盖维度、稳定性、空文本、batch 和 service 维度校验。
+- 新增 Qdrant 配置 `app.qdrant.*`。
+- 新增 `.env.qwen.example` 千问 embedding 配置模板。
+- 新增 `VectorStoreService` 抽象。
+- 新增 `QdrantVectorStoreService`，使用 Spring `RestClient` 适配 Qdrant HTTP API。
+- 新增向量层模型 `ChunkVector`、`VectorSearchRequest`、`VectorSearchResult`。
+- 新增 `GET /api/health/qdrant`，用于 Qdrant collection 初始化 / 连通性检查。
+- 新增 Qdrant 配置、向量模型、请求构造和健康检查相关测试。
 
 ## 本阶段刻意不做
 
 - 不接真实 embedding API。
-- 不写入 Qdrant。
-- 不做向量入库和向量检索。
+- 不读取 `DASHSCOPE_API_KEY`。
+- 不实现 `QwenEmbeddingClient`。
+- 不做 chunk embedding 批量任务。
+- 不把 chunk 写入 Qdrant 处理链路。
+- 不实现向量检索 API。
 - 不修改 document 状态为 `INDEXED`。
 - 不做 LLM。
 - 不做 SSE。
@@ -374,7 +423,8 @@ MockEmbeddingClient
 - Phase 3.3 实现说明：`docs/round-notes/round-012-implementation-notes.md`
 - Phase 3.4 实现说明：`docs/round-notes/round-013-implementation-notes.md`
 - Phase 4.1 实现说明：`docs/round-notes/round-014-implementation-notes.md`
+- Phase 4.2 实现说明：`docs/round-notes/round-015-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 4.2：Qdrant collection 初始化与 VectorStoreService 抽象。下一轮才开始处理向量库侧的 collection 和向量存储边界；当前版本仍没有实现向量入库或向量检索。
+进入 Phase 4.3：chunk embedding、向量入库与 document 状态推进到 `INDEXED`。下一轮才把 embedding 和 VectorStore 接入文档处理链路。

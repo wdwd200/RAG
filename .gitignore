@@ -16,7 +16,13 @@ Thumbs.db
 
 ### Environment ###
 .env
+.env.local
+.env.development
+.env.production
+.env.test
 *.env.local
+!.env.example
+!.env.qwen.example
 
 ### Build output ###
 out/
