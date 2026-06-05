@@ -10,9 +10,12 @@ import com.example.ragbackend.document.entity.Document;
 import com.example.ragbackend.document.enums.DocumentStatus;
 import com.example.ragbackend.document.mapper.DocumentMapper;
 import com.example.ragbackend.document.service.DocumentService;
+import com.example.ragbackend.infrastructure.storage.FileStorageService;
+import com.example.ragbackend.infrastructure.storage.StoredFile;
 import com.example.ragbackend.knowledge.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +29,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     private final DocumentMapper documentMapper;
     private final KnowledgeBaseService knowledgeBaseService;
+    private final FileStorageService fileStorageService;
 
     @Override
     public DocumentResponse createMetadata(DocumentCreateRequest request) {
@@ -43,6 +47,33 @@ public class DocumentServiceImpl implements DocumentService {
         document.setCreatedBy(request.createdBy() == null ? DEFAULT_CREATED_BY : request.createdBy());
 
         documentMapper.insert(document);
+
+        return toResponse(getExistingDocument(document.getId()));
+    }
+
+    @Override
+    public DocumentResponse upload(Long knowledgeBaseId, MultipartFile file, Long createdBy) {
+        ensureKnowledgeBaseExists(knowledgeBaseId);
+
+        StoredFile storedFile = fileStorageService.store(file);
+
+        Document document = new Document();
+        document.setKnowledgeBaseId(knowledgeBaseId);
+        document.setFileName(storedFile.originalFileName());
+        document.setFileType(storedFile.fileType());
+        document.setFileSize(storedFile.fileSize());
+        document.setStoragePath(storedFile.storagePath());
+        document.setStatus(DocumentStatus.UPLOADED.name());
+        document.setChunkCount(DEFAULT_CHUNK_COUNT);
+        document.setProcessingVersion(DEFAULT_PROCESSING_VERSION);
+        document.setCreatedBy(createdBy == null ? DEFAULT_CREATED_BY : createdBy);
+
+        try {
+            documentMapper.insert(document);
+        } catch (RuntimeException ex) {
+            fileStorageService.delete(storedFile.storagePath());
+            throw ex;
+        }
 
         return toResponse(getExistingDocument(document.getId()));
     }

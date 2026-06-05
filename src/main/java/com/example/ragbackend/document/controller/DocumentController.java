@@ -16,8 +16,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @Tag(name = "Document", description = "Document metadata API")
 @RestController
@@ -30,6 +31,16 @@ public class DocumentController {
     @PostMapping("/api/documents")
     public ApiResponse<DocumentResponse> createMetadata(@Valid @RequestBody DocumentCreateRequest request) {
         return ApiResponse.success(documentService.createMetadata(request));
+    }
+
+    @Operation(summary = "Upload document file")
+    @PostMapping("/api/documents/upload")
+    public ApiResponse<DocumentResponse> upload(
+            @RequestParam Long knowledgeBaseId,
+            @RequestParam MultipartFile file,
+            @RequestParam(required = false) Long createdBy
+    ) {
+        return ApiResponse.success(documentService.upload(knowledgeBaseId, file, createdBy));
     }
 
     @Operation(summary = "Get document metadata by id")

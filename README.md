@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 2.1，`document` 表与文档元数据 API 已可用。
+当前阶段：Phase 2.2，文件上传接口与本地 storage 已可用。
 
 ## 技术栈
 
@@ -65,6 +65,8 @@ mvn spring-boot:run
 
 默认服务端口为 `8080`，可通过环境变量 `SERVER_PORT` 或 `src/main/resources/application.yml` 中的 `server.port` 调整。
 
+默认本地文件存储路径为 `storage/documents`，可通过环境变量 `APP_STORAGE_LOCAL_ROOT` 覆盖。`storage/` 已被 `.gitignore` 忽略，不应提交本地上传文件。
+
 ## 健康检查
 
 应用健康检查：
@@ -94,7 +96,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口和文档元数据接口。
+当前 Swagger 页面能看到健康检查接口、知识库 CRUD 接口、文档元数据接口和文件上传接口。
 
 ## 知识库 CRUD API
 
@@ -134,7 +136,7 @@ curl -X DELETE http://localhost:8080/api/knowledge-bases/1
 
 ## 文档元数据 API
 
-本阶段的文档接口只创建和管理文档元数据，不接收 multipart 文件，也不做文档解析。
+文档元数据接口只创建和管理文档记录，不接收 multipart 文件，也不做文档解析。
 
 创建文档元数据：
 
@@ -161,6 +163,21 @@ curl http://localhost:8080/api/knowledge-bases/1/documents
 ```bash
 curl -X DELETE http://localhost:8080/api/documents/1
 ```
+
+## 文件上传 API
+
+上传文件并创建文档记录：
+
+```bash
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "knowledgeBaseId=1" \
+  -F "createdBy=1" \
+  -F "file=@/path/to/demo.pdf"
+```
+
+上传成功后，原始文件会保存到本地 storage，接口会返回 document 记录，状态为 `UPLOADED`。
+
+本阶段不做文件类型白名单、文件大小限制、文档解析、chunk、embedding 或向量检索。
 
 ## 当前已完成
 
@@ -189,12 +206,17 @@ curl -X DELETE http://localhost:8080/api/documents/1
 - 新增 `Document` Entity、Mapper、Service 和 Controller。
 - 新增文档元数据 API。
 - 新增文档元数据接口测试。
+- 新增本地 storage 配置：`app.storage.local-root`。
+- 新增 `FileStorageService` 和 `LocalFileStorageService`。
+- 新增文件上传接口 `POST /api/documents/upload`。
+- 上传成功后保存原始文件并创建 document 记录。
+- 新增文件上传接口测试。
 
 ## 本轮尚未实现
 
-- 文档上传
-- multipart 文件接收
-- 本地文件 storage
+- 文件类型白名单
+- 文件大小限制
+- 删除 document 时同步删除本地文件
 - 文档解析
 - chunk 切分
 - embedding
@@ -208,4 +230,4 @@ curl -X DELETE http://localhost:8080/api/documents/1
 
 ## 下一步计划
 
-进入 Phase 2.2：文件上传接口与本地 storage。
+进入 Phase 2.3：文件类型、大小限制与删除一致性。
