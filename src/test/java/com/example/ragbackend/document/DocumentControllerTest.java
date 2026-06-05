@@ -41,6 +41,7 @@ class DocumentControllerTest {
 
   @BeforeEach
   void cleanData() {
+    jdbcTemplate.execute("DELETE FROM document_chunk");
     jdbcTemplate.execute("DELETE FROM document");
     jdbcTemplate.execute("DELETE FROM knowledge_base");
     FileSystemUtils.deleteRecursively(TEST_STORAGE_ROOT.toFile());

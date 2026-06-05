@@ -31,6 +31,7 @@ class KnowledgeBasePersistenceTest {
 
     @BeforeEach
     void cleanData() {
+        jdbcTemplate.execute("DELETE FROM document_chunk");
         jdbcTemplate.execute("DELETE FROM document");
         jdbcTemplate.execute("DELETE FROM knowledge_base");
     }
