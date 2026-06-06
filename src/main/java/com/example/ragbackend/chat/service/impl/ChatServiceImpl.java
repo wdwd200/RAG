@@ -1,6 +1,8 @@
 package com.example.ragbackend.chat.service.impl;
 
+import com.example.ragbackend.audit.entity.LlmCallLog;
 import com.example.ragbackend.audit.entity.RetrievalLog;
+import com.example.ragbackend.audit.service.LlmCallLogService;
 import com.example.ragbackend.audit.service.RetrievalLogService;
 import com.example.ragbackend.chat.dto.ChatOnceRequest;
 import com.example.ragbackend.chat.dto.ChatOnceResponse;
@@ -12,10 +14,12 @@ import com.example.ragbackend.chat.prompt.PromptBuilder;
 import com.example.ragbackend.chat.prompt.PromptContextChunk;
 import com.example.ragbackend.chat.prompt.RagPromptRequest;
 import com.example.ragbackend.chat.service.ChatMessageService;
+import com.example.ragbackend.chat.service.ChatProgressListener;
 import com.example.ragbackend.chat.service.ChatService;
 import com.example.ragbackend.chat.service.ChatSessionService;
 import com.example.ragbackend.common.exception.BusinessException;
 import com.example.ragbackend.knowledge.service.KnowledgeBaseService;
+import com.example.ragbackend.llm.config.LlmProperties;
 import com.example.ragbackend.llm.model.LlmRequest;
 import com.example.ragbackend.llm.model.LlmResponse;
 import com.example.ragbackend.llm.service.LlmService;
@@ -29,11 +33,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ChatServiceImpl implements ChatService {
 
     static final int DEFAULT_TOP_K = 5;
@@ -46,21 +52,42 @@ public class ChatServiceImpl implements ChatService {
     private static final String CHAT_REFERENCES_SERIALIZATION_FAILED_CODE =
             "CHAT_REFERENCES_SERIALIZATION_FAILED";
     private static final String LLM_COMPLETION_FAILED_CODE = "LLM_COMPLETION_FAILED";
+    private static final int MAX_LLM_ERROR_MESSAGE_LENGTH = 2000;
 
     private final ChatSessionService chatSessionService;
     private final ChatMessageService chatMessageService;
     private final RetrievalLogService retrievalLogService;
+    private final LlmCallLogService llmCallLogService;
     private final KnowledgeBaseService knowledgeBaseService;
     private final RetrievalService retrievalService;
     private final PromptBuilder promptBuilder;
     private final LlmService llmService;
+    private final LlmProperties llmProperties;
     private final ObjectMapper objectMapper;
 
     @Override
     @Transactional
     public ChatOnceResponse once(ChatOnceRequest request) {
+        return executeWorkflow(request, ChatProgressListener.noOp());
+    }
+
+    @Override
+    @Transactional
+    public ChatOnceResponse execute(
+            ChatOnceRequest request,
+            ChatProgressListener progressListener) {
+        return executeWorkflow(
+                request,
+                progressListener == null ? ChatProgressListener.noOp() : progressListener
+        );
+    }
+
+    private ChatOnceResponse executeWorkflow(
+            ChatOnceRequest request,
+            ChatProgressListener progressListener) {
         validateRequest(request);
         String requestId = UUID.randomUUID().toString();
+        progressListener.onRetrievalStart(requestId);
         knowledgeBaseService.getById(request.knowledgeBaseId());
 
         ChatSession session = resolveSession(request);
@@ -86,11 +113,17 @@ public class ChatServiceImpl implements ChatService {
                 retrieval.chunks()
         ));
         List<ChatReferenceResponse> references = toReferences(retrieval.chunks());
+        progressListener.onRetrievalResult(requestId, references);
         String prompt = promptBuilder.build(
                 new RagPromptRequest(request.question().trim(), toPromptChunks(retrieval.chunks()))
         );
-        LlmResponse llmResponse = llmService.complete(new LlmRequest(prompt, null, null));
-        validateLlmResponse(llmResponse);
+        LlmResponse llmResponse = completeWithLog(
+                requestId,
+                session.getId(),
+                userMessage.getId(),
+                request.knowledgeBaseId(),
+                prompt
+        );
 
         ChatMessage assistantMessage = chatMessageService.create(
                 session.getId(),
@@ -108,6 +141,107 @@ public class ChatServiceImpl implements ChatService {
                 llmResponse.content(),
                 references
         );
+    }
+
+    private LlmResponse completeWithLog(
+            String requestId,
+            Long sessionId,
+            Long messageId,
+            Long knowledgeBaseId,
+            String prompt) {
+        long startedAt = System.nanoTime();
+        LlmResponse response;
+        try {
+            response = llmService.complete(new LlmRequest(prompt, null, null));
+            validateLlmResponse(response);
+        } catch (RuntimeException ex) {
+            saveFailedLlmCallLog(
+                    requestId,
+                    sessionId,
+                    messageId,
+                    knowledgeBaseId,
+                    elapsedMillis(startedAt),
+                    ex
+            );
+            throw ex;
+        }
+
+        llmCallLogService.save(createLlmCallLog(
+                requestId,
+                sessionId,
+                messageId,
+                knowledgeBaseId,
+                response.model(),
+                elapsedMillis(startedAt),
+                true,
+                null
+        ));
+        return response;
+    }
+
+    private void saveFailedLlmCallLog(
+            String requestId,
+            Long sessionId,
+            Long messageId,
+            Long knowledgeBaseId,
+            long latencyMs,
+            RuntimeException failure) {
+        try {
+            llmCallLogService.saveInNewTransaction(createLlmCallLog(
+                    requestId,
+                    sessionId,
+                    messageId,
+                    knowledgeBaseId,
+                    llmProperties.getModel(),
+                    latencyMs,
+                    false,
+                    errorMessage(failure)
+            ));
+        } catch (RuntimeException logFailure) {
+            log.warn("Failed to persist LLM failure log for requestId={}", requestId);
+        }
+    }
+
+    private LlmCallLog createLlmCallLog(
+            String requestId,
+            Long sessionId,
+            Long messageId,
+            Long knowledgeBaseId,
+            String modelName,
+            long latencyMs,
+            boolean success,
+            String errorMessage) {
+        LlmCallLog logEntry = new LlmCallLog();
+        logEntry.setRequestId(requestId);
+        logEntry.setSessionId(sessionId);
+        logEntry.setMessageId(messageId);
+        logEntry.setKnowledgeBaseId(knowledgeBaseId);
+        logEntry.setProvider(llmProperties.getProvider());
+        logEntry.setModelName(
+                modelName == null || modelName.isBlank()
+                        ? llmProperties.getModel()
+                        : modelName
+        );
+        logEntry.setPromptTokens(null);
+        logEntry.setCompletionTokens(null);
+        logEntry.setLatencyMs(latencyMs);
+        logEntry.setSuccess(success);
+        logEntry.setErrorMessage(errorMessage);
+        return logEntry;
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
+    }
+
+    private String errorMessage(RuntimeException failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) {
+            message = failure.getClass().getSimpleName();
+        }
+        return message.length() <= MAX_LLM_ERROR_MESSAGE_LENGTH
+                ? message
+                : message.substring(0, MAX_LLM_ERROR_MESSAGE_LENGTH);
     }
 
     private List<RetrievalLog> toRetrievalLogs(

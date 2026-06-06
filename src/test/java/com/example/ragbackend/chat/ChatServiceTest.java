@@ -1,6 +1,7 @@
 package com.example.ragbackend.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -8,7 +9,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.example.ragbackend.audit.entity.LlmCallLog;
 import com.example.ragbackend.audit.entity.RetrievalLog;
+import com.example.ragbackend.audit.service.LlmCallLogService;
 import com.example.ragbackend.audit.service.RetrievalLogService;
 import com.example.ragbackend.chat.dto.ChatOnceRequest;
 import com.example.ragbackend.chat.dto.ChatOnceResponse;
@@ -19,10 +22,13 @@ import com.example.ragbackend.chat.prompt.PromptBuilder;
 import com.example.ragbackend.chat.prompt.PromptContextChunk;
 import com.example.ragbackend.chat.prompt.RagPromptRequest;
 import com.example.ragbackend.chat.service.ChatMessageService;
+import com.example.ragbackend.chat.service.ChatProgressListener;
 import com.example.ragbackend.chat.service.ChatService;
 import com.example.ragbackend.chat.service.ChatSessionService;
 import com.example.ragbackend.chat.service.impl.ChatServiceImpl;
+import com.example.ragbackend.common.exception.BusinessException;
 import com.example.ragbackend.knowledge.service.KnowledgeBaseService;
+import com.example.ragbackend.llm.config.LlmProperties;
 import com.example.ragbackend.llm.model.LlmRequest;
 import com.example.ragbackend.llm.model.LlmResponse;
 import com.example.ragbackend.llm.service.LlmService;
@@ -43,18 +49,22 @@ class ChatServiceTest {
         ChatSessionService sessionService = mock(ChatSessionService.class);
         ChatMessageService messageService = mock(ChatMessageService.class);
         RetrievalLogService retrievalLogService = mock(RetrievalLogService.class);
+        LlmCallLogService llmCallLogService = mock(LlmCallLogService.class);
         KnowledgeBaseService knowledgeBaseService = mock(KnowledgeBaseService.class);
         RetrievalService retrievalService = mock(RetrievalService.class);
         PromptBuilder promptBuilder = mock(PromptBuilder.class);
         LlmService llmService = mock(LlmService.class);
+        LlmProperties llmProperties = new LlmProperties();
         ChatService chatService = new ChatServiceImpl(
                 sessionService,
                 messageService,
                 retrievalLogService,
+                llmCallLogService,
                 knowledgeBaseService,
                 retrievalService,
                 promptBuilder,
                 llmService,
+                llmProperties,
                 new ObjectMapper()
         );
 
@@ -105,6 +115,19 @@ class ChatServiceTest {
         ));
         verify(llmService).complete(new LlmRequest("built prompt", null, null));
 
+        ArgumentCaptor<LlmCallLog> llmLogCaptor = ArgumentCaptor.forClass(LlmCallLog.class);
+        verify(llmCallLogService).save(llmLogCaptor.capture());
+        LlmCallLog llmLog = llmLogCaptor.getValue();
+        assertThat(llmLog.getRequestId()).isEqualTo(response.requestId());
+        assertThat(llmLog.getSessionId()).isEqualTo(30L);
+        assertThat(llmLog.getMessageId()).isEqualTo(31L);
+        assertThat(llmLog.getKnowledgeBaseId()).isEqualTo(7L);
+        assertThat(llmLog.getProvider()).isEqualTo("mock");
+        assertThat(llmLog.getModelName()).isEqualTo("mock-rag-assistant");
+        assertThat(llmLog.getLatencyMs()).isNotNegative();
+        assertThat(llmLog.getSuccess()).isTrue();
+        assertThat(llmLog.getErrorMessage()).isNull();
+
         ArgumentCaptor<List<RetrievalLog>> logsCaptor = ArgumentCaptor.forClass(List.class);
         verify(retrievalLogService).saveLogs(logsCaptor.capture());
         assertThat(logsCaptor.getValue()).hasSize(1);
@@ -144,6 +167,67 @@ class ChatServiceTest {
                 .contains("\"chunkId\":11")
                 .contains("\"knowledgeBaseId\":7")
                 .contains("\"content\":\"database fact\"");
+    }
+
+    @Test
+    void writesFailureLogAndRethrowsLlmException() {
+        ChatSessionService sessionService = mock(ChatSessionService.class);
+        ChatMessageService messageService = mock(ChatMessageService.class);
+        RetrievalLogService retrievalLogService = mock(RetrievalLogService.class);
+        LlmCallLogService llmCallLogService = mock(LlmCallLogService.class);
+        KnowledgeBaseService knowledgeBaseService = mock(KnowledgeBaseService.class);
+        RetrievalService retrievalService = mock(RetrievalService.class);
+        PromptBuilder promptBuilder = mock(PromptBuilder.class);
+        LlmService llmService = mock(LlmService.class);
+        LlmProperties llmProperties = new LlmProperties();
+        ChatService chatService = new ChatServiceImpl(
+                sessionService,
+                messageService,
+                retrievalLogService,
+                llmCallLogService,
+                knowledgeBaseService,
+                retrievalService,
+                promptBuilder,
+                llmService,
+                llmProperties,
+                new ObjectMapper()
+        );
+
+        when(sessionService.create(7L, 1L, "question")).thenReturn(session(30L, 7L));
+        when(messageService.create(
+                eq(30L),
+                eq(ChatMessageRole.USER),
+                eq("question"),
+                isNull(),
+                anyString()
+        )).thenReturn(message(31L, 30L, "USER", "question"));
+        when(retrievalService.retrieve(new RetrieveRequest(7L, "question", 5)))
+                .thenReturn(new RetrieveResponse(7L, "question", 5, List.of()));
+        when(promptBuilder.build(new RagPromptRequest("question", List.of())))
+                .thenReturn("built prompt");
+        when(llmService.complete(new LlmRequest("built prompt", null, null)))
+                .thenThrow(new BusinessException(
+                        "QWEN_LLM_REQUEST_FAILED",
+                        "Qwen LLM request failed"
+                ));
+
+        assertThatThrownBy(() -> chatService.once(
+                new ChatOnceRequest(7L, null, "question", null)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Qwen LLM request failed");
+
+        ArgumentCaptor<LlmCallLog> logCaptor = ArgumentCaptor.forClass(LlmCallLog.class);
+        verify(llmCallLogService).saveInNewTransaction(logCaptor.capture());
+        LlmCallLog log = logCaptor.getValue();
+        assertThat(log.getRequestId()).isNotBlank();
+        assertThat(log.getSessionId()).isEqualTo(30L);
+        assertThat(log.getMessageId()).isEqualTo(31L);
+        assertThat(log.getProvider()).isEqualTo("mock");
+        assertThat(log.getModelName()).isEqualTo("mock-rag-assistant");
+        assertThat(log.getLatencyMs()).isNotNegative();
+        assertThat(log.getSuccess()).isFalse();
+        assertThat(log.getErrorMessage()).isEqualTo("Qwen LLM request failed");
     }
 
     private ChatSession session(Long id, Long knowledgeBaseId) {

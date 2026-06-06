@@ -30,6 +30,7 @@ class ChatPersistenceTest {
 
     @BeforeEach
     void cleanData() {
+        jdbcTemplate.execute("DELETE FROM llm_call_log");
         jdbcTemplate.execute("DELETE FROM retrieval_log");
         jdbcTemplate.execute("DELETE FROM chat_message");
         jdbcTemplate.execute("DELETE FROM chat_session");
@@ -40,11 +41,13 @@ class ChatPersistenceTest {
         Integer sessionTableCount = tableCount("chat_session");
         Integer messageTableCount = tableCount("chat_message");
         Integer retrievalLogTableCount = tableCount("retrieval_log");
+        Integer llmCallLogTableCount = tableCount("llm_call_log");
         Integer requestIdColumnCount = columnCount("chat_message", "request_id");
 
         assertThat(sessionTableCount).isEqualTo(1);
         assertThat(messageTableCount).isEqualTo(1);
         assertThat(retrievalLogTableCount).isEqualTo(1);
+        assertThat(llmCallLogTableCount).isEqualTo(1);
         assertThat(requestIdColumnCount).isEqualTo(1);
     }
 

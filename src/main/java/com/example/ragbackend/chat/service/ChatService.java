@@ -6,4 +6,8 @@ import com.example.ragbackend.chat.dto.ChatOnceResponse;
 public interface ChatService {
 
     ChatOnceResponse once(ChatOnceRequest request);
+
+    ChatOnceResponse execute(
+            ChatOnceRequest request,
+            ChatProgressListener progressListener);
 }

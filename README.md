@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5.4 已完成。项目已支持文档处理、向量检索、一次性 RAG 问答、requestId 检索日志追踪，以及可选的千问真实 LLM；默认仍使用 Mock LLM，尚未实现 SSE。
+当前阶段：Phase 5.5 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及可选的千问真实 LLM；默认仍使用 Mock LLM。
 
 ## 技术栈
 
@@ -165,7 +165,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 RAG 问答和检索日志查询接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答，以及检索日志和 LLM 调用日志查询接口。
 
 ## 知识库 CRUD API
 
@@ -547,6 +547,8 @@ LlmClient
   ↓
 MockLlmClient 或 QwenLlmClient
   ↓
+写入 llm_call_log
+  ↓
 保存 assistant message
   ↓
 返回 answer + references
@@ -591,14 +593,51 @@ references
 
 每次成功调用会生成一个 UUID requestId，并保存一条 `USER` 消息和一条 `ASSISTANT` 消息。两条消息使用同一个 requestId；assistant 消息的 `references_json` 保存本次回答引用的 chunk 信息。响应中的 references 和持久化引用都来自 RetrievalService 返回的关系库 active chunk。
 
-该接口根据 `APP_LLM_PROVIDER` 使用 Mock LLM 或 Qwen LLM。本轮仍只提供普通 JSON 响应，不提供 SSE。
+该接口根据 `APP_LLM_PROVIDER` 使用 Mock LLM 或 Qwen LLM，并返回普通 JSON 响应。
 
-## 检索日志与 requestId
+## SSE RAG 问答 API
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"knowledgeBaseId":1,"sessionId":null,"question":"这份文档讲了什么？","topK":5}'
+```
+
+请求参数规则与 `/api/chat/once` 相同。接口响应类型是 `text/event-stream`，事件顺序如下：
+
+```text
+retrieval_start
+retrieval_result
+answer_delta
+references
+done
+```
+
+发生异常时发送 `error` 事件并结束连接。每个事件的数据结构都包含：
+
+```text
+requestId
+eventType
+data
+```
+
+事件含义：
+
+- `retrieval_start`：检索开始，并返回本次问答的 requestId。
+- `retrieval_result`：返回检索到的关系库 active chunk 引用。
+- `answer_delta`：返回一段回答文本，可能发送多次。
+- `references`：返回本次回答的完整引用列表。
+- `done`：明确表示完成，并返回 sessionId、userMessageId 和 assistantMessageId。
+- `error`：返回不包含 Java 堆栈的清晰错误信息。
+
+当前 SSE 是应用层流式输出：`LlmService.complete()` 先获取完整答案，再拆成多个 `answer_delta` 事件发送，尚不是真实模型 token streaming。`/api/chat/once` 与 `/api/chat/stream` 复用同一套事务化问答工作流，因此两者都会保存 USER / ASSISTANT message、retrieval_log 和 llm_call_log。
+
+## 问答审计日志与 requestId
 
 一次问答的追踪链路：
 
 ```text
-POST /api/chat/once
+POST /api/chat/once 或 POST /api/chat/stream
   ↓
 生成 requestId
   ↓
@@ -606,15 +645,23 @@ USER chat_message
   ↓
 retrieval_log 多条记录
   ↓
+llm_call_log 一条记录
+  ↓
 ASSISTANT chat_message
   ↓
-ChatOnceResponse.requestId
+JSON 响应或 SSE events
 ```
 
 使用问答响应中的 requestId 查询检索日志：
 
 ```bash
 curl http://localhost:8080/api/audit/retrieval-logs/{requestId}
+```
+
+查询 LLM 调用日志：
+
+```bash
+curl http://localhost:8080/api/audit/llm-call-logs/{requestId}
 ```
 
 日志按 `rankPosition` 升序返回，每条记录包含：
@@ -635,6 +682,8 @@ createdAt
 ```
 
 `messageId` 指向本次用户问题消息，`rankPosition` 从 1 开始。检索结果为空时不写占位日志，查询该 requestId 会返回空列表，问答仍会使用空上下文 prompt 正常返回 Mock LLM 响应。
+
+每次 LLM 调用会记录 provider、modelName、latencyMs、success 和 errorMessage。当前 LLM Client 没有暴露真实 usage，因此 `promptTokens` 和 `completionTokens` 保持为空。成功日志跟随问答主事务提交；LLM 失败日志使用独立事务保存，随后继续抛出原异常，主问答事务会回滚。
 
 ## 当前已完成
 
@@ -709,18 +758,24 @@ createdAt
 - 默认 provider 继续使用 MockLlmClient，不依赖真实 API key。
 - 新增 Qwen LLM 鉴权、请求体、响应解析和错误处理测试。
 - 使用本地 key 和 `qwen-plus` 完成真实 Chat Completions 最小验证。
+- 新增 `llm_call_log` 表及 requestId、sessionId 索引。
+- 新增 LlmCallLog Entity、Mapper、Service、DTO 和查询 Controller。
+- 新增 `GET /api/audit/llm-call-logs/{requestId}`。
+- `/api/chat/once` 会记录 LLM provider、model、耗时、成功状态和错误摘要。
+- 新增 `POST /api/chat/stream`，通过 SSE 返回检索、回答片段、引用、完成和错误事件。
+- `/api/chat/once` 与 `/api/chat/stream` 复用同一套问答工作流。
+- stream 流程同样保存 chat_message、retrieval_log 和 llm_call_log。
+- 新增 LLM 成功 / 失败日志、SSE 顺序、参数校验和持久化测试。
 
 ## 本阶段刻意不做
 
 - 不接 OpenAI LLM API。
-- 不做 SSE。
-- 不做 `/api/chat/stream`。
-- 不做 llm_call_log。
+- 不做真实模型 token streaming。
 - 不做 token 统计。
 - 不做复杂多轮记忆。
 - 不做 reranker。
 - 不做 Redis / Elasticsearch / RabbitMQ。
-- 不做异步处理。
+- 不做异步任务系统或消息队列。
 - 不做分布式事务。
 - 不做复杂重试。
 - 不做 PDF / docx 解析。
@@ -745,7 +800,8 @@ createdAt
 - Phase 5.2 实现说明：`docs/round-notes/round-020-implementation-notes.md`
 - Phase 5.3 实现说明：`docs/round-notes/round-021-implementation-notes.md`
 - Phase 5.4 实现说明：`docs/round-notes/round-022-implementation-notes.md`
+- Phase 5.5 实现说明：`docs/round-notes/round-023-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.5：SSE 流式输出与 llm_call_log。
+进入 Phase 5.6：Phase 5 收尾、问答链路验证与导读整理。

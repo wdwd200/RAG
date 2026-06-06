@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.example.ragbackend.chat.entity.ChatMessage;
@@ -21,6 +24,8 @@ import com.example.ragbackend.retrieval.service.RetrievalService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +43,9 @@ import org.springframework.test.web.servlet.MvcResult;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class ChatControllerTest {
+
+    private static final Pattern REQUEST_ID_PATTERN =
+            Pattern.compile("\"requestId\":\"([^\"]+)\"");
 
     @Autowired
     private MockMvc mockMvc;
@@ -62,6 +70,7 @@ class ChatControllerTest {
 
     @BeforeEach
     void cleanData() {
+        jdbcTemplate.execute("DELETE FROM llm_call_log");
         jdbcTemplate.execute("DELETE FROM retrieval_log");
         jdbcTemplate.execute("DELETE FROM chat_message");
         jdbcTemplate.execute("DELETE FROM chat_session");
@@ -155,6 +164,19 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.data[1].chunkId").value(102))
                 .andExpect(jsonPath("$.data[1].rankPosition").value(2));
 
+        mockMvc.perform(get("/api/audit/llm-call-logs/{requestId}", requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].requestId").value(requestId))
+                .andExpect(jsonPath("$.data[0].sessionId").value(sessionId))
+                .andExpect(jsonPath("$.data[0].messageId").value(messages.get(0).getId()))
+                .andExpect(jsonPath("$.data[0].knowledgeBaseId").value(knowledgeBaseId))
+                .andExpect(jsonPath("$.data[0].provider").value("mock"))
+                .andExpect(jsonPath("$.data[0].modelName").value("mock-rag-assistant"))
+                .andExpect(jsonPath("$.data[0].success").value(true))
+                .andExpect(jsonPath("$.data[0].errorMessage").doesNotExist());
+
         ArgumentCaptor<RetrieveRequest> requestCaptor = ArgumentCaptor.forClass(RetrieveRequest.class);
         verify(retrievalService).retrieve(requestCaptor.capture());
         assertThat(requestCaptor.getValue().knowledgeBaseId()).isEqualTo(knowledgeBaseId);
@@ -179,6 +201,101 @@ class ChatControllerTest {
                 Integer.class
         );
         assertThat(logCount).isZero();
+    }
+
+    @Test
+    void streamsRagEventsAndPersistsMessagesAndAuditLogs() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        RetrievedChunk chunk = new RetrievedChunk(
+                301L,
+                401L,
+                knowledgeBaseId,
+                0,
+                0.95d,
+                "Streaming uses the same relational chunk facts."
+        );
+        when(retrievalService.retrieve(any(RetrieveRequest.class))).thenReturn(
+                new RetrieveResponse(
+                        knowledgeBaseId,
+                        "How does streaming work?",
+                        5,
+                        List.of(chunk)
+                )
+        );
+
+        MvcResult pendingResult = mockMvc.perform(post("/api/chat/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "knowledgeBaseId": %d,
+                                  "question": "How does streaming work?"
+                                }
+                                """.formatted(knowledgeBaseId)))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        MvcResult completedResult = mockMvc.perform(asyncDispatch(pendingResult))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
+                .andReturn();
+
+        String eventStream = completedResult.getResponse().getContentAsString();
+        assertThat(eventStream)
+                .contains("event:retrieval_start")
+                .contains("event:retrieval_result")
+                .contains("event:answer_delta")
+                .contains("event:references")
+                .contains("event:done")
+                .doesNotContain("event:error");
+        assertThat(eventStream.indexOf("event:retrieval_start"))
+                .isLessThan(eventStream.indexOf("event:retrieval_result"));
+        assertThat(eventStream.indexOf("event:retrieval_result"))
+                .isLessThan(eventStream.indexOf("event:answer_delta"));
+        assertThat(eventStream.indexOf("event:answer_delta"))
+                .isLessThan(eventStream.indexOf("event:references"));
+        assertThat(eventStream.indexOf("event:references"))
+                .isLessThan(eventStream.indexOf("event:done"));
+
+        String requestId = extractRequestId(eventStream);
+        assertThat(requestId).isNotBlank();
+        assertThat(eventStream)
+                .contains("\"requestId\":\"" + requestId + "\"")
+                .contains("\"eventType\":\"retrieval_start\"")
+                .contains("\"eventType\":\"done\"")
+                .contains("\"completed\":true");
+
+        Integer messageCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM chat_message WHERE request_id = ?",
+                Integer.class,
+                requestId
+        );
+        Integer retrievalLogCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM retrieval_log WHERE request_id = ?",
+                Integer.class,
+                requestId
+        );
+        Integer llmLogCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM llm_call_log WHERE request_id = ? AND success = TRUE",
+                Integer.class,
+                requestId
+        );
+        assertThat(messageCount).isEqualTo(2);
+        assertThat(retrievalLogCount).isEqualTo(1);
+        assertThat(llmLogCount).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsBlankQuestionForStream() throws Exception {
+        mockMvc.perform(post("/api/chat/stream")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "knowledgeBaseId": 1,
+                                  "question": " "
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -243,5 +360,11 @@ class ChatControllerTest {
         knowledgeBase.setVisibility("PRIVATE");
         knowledgeBaseMapper.insert(knowledgeBase);
         return knowledgeBase.getId();
+    }
+
+    private String extractRequestId(String eventStream) {
+        Matcher matcher = REQUEST_ID_PATTERN.matcher(eventStream);
+        assertThat(matcher.find()).isTrue();
+        return matcher.group(1);
     }
 }
