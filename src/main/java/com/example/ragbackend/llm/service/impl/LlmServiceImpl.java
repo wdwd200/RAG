@@ -28,8 +28,11 @@ public class LlmServiceImpl implements LlmService {
         String model = request.model() == null || request.model().isBlank()
                 ? llmProperties.getModel()
                 : request.model();
+        Double temperature = request.temperature() == null
+                ? llmProperties.getTemperature()
+                : request.temperature();
         LlmResponse response = llmClient.complete(
-                new LlmRequest(request.prompt(), model, request.temperature())
+                new LlmRequest(request.prompt(), model, temperature)
         );
         if (response == null) {
             throw new BusinessException(LLM_RESPONSE_INVALID_CODE, "LLM response must not be null");

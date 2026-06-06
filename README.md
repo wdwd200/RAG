@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5.3 已完成。项目已支持文档处理、向量检索、一次性 RAG 问答和 requestId 检索日志追踪；当前使用 Mock LLM，尚未接入真实 LLM 或 SSE。
+当前阶段：Phase 5.4 已完成。项目已支持文档处理、向量检索、一次性 RAG 问答、requestId 检索日志追踪，以及可选的千问真实 LLM；默认仍使用 Mock LLM，尚未实现 SSE。
 
 ## 技术栈
 
@@ -96,7 +96,7 @@ QDRANT_DISTANCE=COSINE
 
 `app.qdrant.vector-size` 默认跟 `APP_EMBEDDING_DIMENSION` 保持一致。Mock embedding 默认是 384 维，千问 `text-embedding-v4` 建议使用 1024 维。如果 Qdrant collection 已按 384 维创建，切换到 1024 维前必须删除旧 collection 或使用新的 `QDRANT_COLLECTION_NAME`，否则索引和检索会因向量维度不一致失败。
 
-`.env.qwen.example` 是启用千问 embedding 的配置模板。真实 `DASHSCOPE_API_KEY` 只允许填写在本地 `.env`、环境变量或 IDEA Run Configuration 中，不得提交到 Git。启用配置：
+`.env.qwen.example` 是启用千问 embedding 和千问 LLM 的配置模板。真实 `DASHSCOPE_API_KEY` 只允许填写在本地 `.env`、环境变量或 IDEA Run Configuration 中，不得提交到 Git。千问 embedding 配置：
 
 ```text
 APP_EMBEDDING_PROVIDER=qwen
@@ -111,9 +111,24 @@ DASHSCOPE_API_KEY=replace-with-your-api-key
 ```text
 APP_LLM_PROVIDER=mock
 APP_LLM_MODEL=mock-rag-assistant
+APP_LLM_TEMPERATURE=0.2
+APP_LLM_MAX_TOKENS=1000
 ```
 
-Phase 5.1 只提供 `MockLlmClient`，不会读取真实 LLM API key，也不会调用 Qwen 或 OpenAI LLM。LLM 配置与 embedding 配置相互独立。
+默认 provider 是 `mock`，不需要 API key，`/api/chat/once` 使用 `MockLlmClient` 返回稳定测试答案。
+
+本地切换到千问 LLM：
+
+```text
+APP_LLM_PROVIDER=qwen
+APP_LLM_MODEL=qwen-plus
+QWEN_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+APP_LLM_TEMPERATURE=0.2
+APP_LLM_MAX_TOKENS=1000
+DASHSCOPE_API_KEY=replace-with-your-api-key
+```
+
+设置 provider 为 `qwen` 后，`QwenLlmClient` 会调用 DashScope OpenAI-compatible Chat Completions API。`DASHSCOPE_API_KEY` 可以同时用于千问 embedding 和千问 LLM；真实 key 不得提交。LLM provider 与 embedding provider 可以独立选择。
 
 ## 健康检查
 
@@ -530,7 +545,7 @@ LlmService
   ↓
 LlmClient
   ↓
-MockLlmClient
+MockLlmClient 或 QwenLlmClient
   ↓
 保存 assistant message
   ↓
@@ -545,7 +560,7 @@ MockLlmClient
 - 上下文不足时说明“根据当前知识库内容无法确定”的约束。
 - 使用 `[片段N]` 标注引用来源的要求。
 
-`LlmService` 是业务侧 LLM 入口，负责校验 prompt、补充默认模型并调用 `LlmClient`。`MockLlmClient` 返回稳定、可预测的 mock answer，用于 chat 闭环测试。
+`LlmService` 是业务侧 LLM 入口，负责校验 prompt、补充默认模型和 temperature，并调用 `LlmClient`。`MockLlmClient` 返回稳定、可预测的 mock answer；`QwenLlmClient` 只负责千问 Chat Completions HTTP 鉴权、请求和响应解析。
 
 ## 一次性 RAG 问答 API
 
@@ -576,7 +591,7 @@ references
 
 每次成功调用会生成一个 UUID requestId，并保存一条 `USER` 消息和一条 `ASSISTANT` 消息。两条消息使用同一个 requestId；assistant 消息的 `references_json` 保存本次回答引用的 chunk 信息。响应中的 references 和持久化引用都来自 RetrievalService 返回的关系库 active chunk。
 
-本轮只实现普通 JSON 响应，使用 Mock LLM，不调用真实 LLM API，也不提供 SSE。
+该接口根据 `APP_LLM_PROVIDER` 使用 Mock LLM 或 Qwen LLM。本轮仍只提供普通 JSON 响应，不提供 SSE。
 
 ## 检索日志与 requestId
 
@@ -688,10 +703,16 @@ createdAt
 - ChatService 按检索顺序写入 retrieval_log，rankPosition 从 1 开始。
 - 新增 `GET /api/audit/retrieval-logs/{requestId}` 开发排查接口。
 - 新增 requestId、日志持久化、排序查询和空请求防脏数据测试。
+- 扩展 `LlmProperties`，支持 baseUrl、apiKey、temperature 和 maxTokens。
+- 新增 `QwenLlmClient`，适配 DashScope OpenAI-compatible Chat Completions API。
+- 补充 `.env.qwen.example` 千问 LLM 配置模板。
+- 默认 provider 继续使用 MockLlmClient，不依赖真实 API key。
+- 新增 Qwen LLM 鉴权、请求体、响应解析和错误处理测试。
+- 使用本地 key 和 `qwen-plus` 完成真实 Chat Completions 最小验证。
 
 ## 本阶段刻意不做
 
-- 不接真实 LLM API。
+- 不接 OpenAI LLM API。
 - 不做 SSE。
 - 不做 `/api/chat/stream`。
 - 不做 llm_call_log。
@@ -723,7 +744,8 @@ createdAt
 - Phase 5.1 实现说明：`docs/round-notes/round-019-implementation-notes.md`
 - Phase 5.2 实现说明：`docs/round-notes/round-020-implementation-notes.md`
 - Phase 5.3 实现说明：`docs/round-notes/round-021-implementation-notes.md`
+- Phase 5.4 实现说明：`docs/round-notes/round-022-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.4：真实 LLM Client 与模型配置模板。SSE 仍留在后续阶段。
+进入 Phase 5.5：SSE 流式输出与 llm_call_log。
