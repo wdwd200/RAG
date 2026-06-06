@@ -6,7 +6,12 @@ import java.util.List;
 
 public interface ChatMessageService {
 
-    ChatMessage create(Long sessionId, ChatMessageRole role, String content, String referencesJson);
+    ChatMessage create(
+            Long sessionId,
+            ChatMessageRole role,
+            String content,
+            String referencesJson,
+            String requestId);
 
     List<ChatMessage> findBySessionId(Long sessionId);
 }

@@ -20,12 +20,14 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             Long sessionId,
             ChatMessageRole role,
             String content,
-            String referencesJson) {
+            String referencesJson,
+            String requestId) {
         ChatMessage message = new ChatMessage();
         message.setSessionId(sessionId);
         message.setRole(role.name());
         message.setContent(content);
         message.setReferencesJson(referencesJson);
+        message.setRequestId(requestId);
         chatMessageMapper.insert(message);
         return chatMessageMapper.selectById(message.getId());
     }

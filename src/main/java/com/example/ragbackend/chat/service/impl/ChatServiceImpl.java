@@ -1,5 +1,7 @@
 package com.example.ragbackend.chat.service.impl;
 
+import com.example.ragbackend.audit.entity.RetrievalLog;
+import com.example.ragbackend.audit.service.RetrievalLogService;
 import com.example.ragbackend.chat.dto.ChatOnceRequest;
 import com.example.ragbackend.chat.dto.ChatOnceResponse;
 import com.example.ragbackend.chat.dto.ChatReferenceResponse;
@@ -23,7 +25,9 @@ import com.example.ragbackend.retrieval.dto.RetrievedChunk;
 import com.example.ragbackend.retrieval.service.RetrievalService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +49,7 @@ public class ChatServiceImpl implements ChatService {
 
     private final ChatSessionService chatSessionService;
     private final ChatMessageService chatMessageService;
+    private final RetrievalLogService retrievalLogService;
     private final KnowledgeBaseService knowledgeBaseService;
     private final RetrievalService retrievalService;
     private final PromptBuilder promptBuilder;
@@ -55,6 +60,7 @@ public class ChatServiceImpl implements ChatService {
     @Transactional
     public ChatOnceResponse once(ChatOnceRequest request) {
         validateRequest(request);
+        String requestId = UUID.randomUUID().toString();
         knowledgeBaseService.getById(request.knowledgeBaseId());
 
         ChatSession session = resolveSession(request);
@@ -62,13 +68,23 @@ public class ChatServiceImpl implements ChatService {
                 session.getId(),
                 ChatMessageRole.USER,
                 request.question().trim(),
-                null
+                null,
+                requestId
         );
 
         int topK = request.topK() == null ? DEFAULT_TOP_K : request.topK();
         RetrieveResponse retrieval = retrievalService.retrieve(
                 new RetrieveRequest(request.knowledgeBaseId(), request.question().trim(), topK)
         );
+        retrievalLogService.saveLogs(toRetrievalLogs(
+                requestId,
+                session.getId(),
+                userMessage.getId(),
+                request.knowledgeBaseId(),
+                request.question().trim(),
+                topK,
+                retrieval.chunks()
+        ));
         List<ChatReferenceResponse> references = toReferences(retrieval.chunks());
         String prompt = promptBuilder.build(
                 new RagPromptRequest(request.question().trim(), toPromptChunks(retrieval.chunks()))
@@ -80,16 +96,46 @@ public class ChatServiceImpl implements ChatService {
                 session.getId(),
                 ChatMessageRole.ASSISTANT,
                 llmResponse.content(),
-                serializeReferences(references)
+                serializeReferences(references),
+                requestId
         );
 
         return new ChatOnceResponse(
+                requestId,
                 session.getId(),
                 userMessage.getId(),
                 assistantMessage.getId(),
                 llmResponse.content(),
                 references
         );
+    }
+
+    private List<RetrievalLog> toRetrievalLogs(
+            String requestId,
+            Long sessionId,
+            Long messageId,
+            Long knowledgeBaseId,
+            String question,
+            int topK,
+            List<RetrievedChunk> chunks) {
+        List<RetrievalLog> logs = new ArrayList<>(chunks.size());
+        for (int i = 0; i < chunks.size(); i++) {
+            RetrievedChunk chunk = chunks.get(i);
+            RetrievalLog log = new RetrievalLog();
+            log.setRequestId(requestId);
+            log.setSessionId(sessionId);
+            log.setMessageId(messageId);
+            log.setKnowledgeBaseId(knowledgeBaseId);
+            log.setQuestion(question);
+            log.setRetrieverType("VECTOR");
+            log.setTopK(topK);
+            log.setChunkId(chunk.chunkId());
+            log.setDocumentId(chunk.documentId());
+            log.setRankPosition(i + 1);
+            log.setScore(chunk.score());
+            logs.add(log);
+        }
+        return logs;
     }
 
     private void validateRequest(ChatOnceRequest request) {

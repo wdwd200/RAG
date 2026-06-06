@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -61,6 +62,7 @@ class ChatControllerTest {
 
     @BeforeEach
     void cleanData() {
+        jdbcTemplate.execute("DELETE FROM retrieval_log");
         jdbcTemplate.execute("DELETE FROM chat_message");
         jdbcTemplate.execute("DELETE FROM chat_session");
         jdbcTemplate.execute("DELETE FROM document_chunk");
@@ -71,7 +73,7 @@ class ChatControllerTest {
     @Test
     void createsSessionSavesMessagesAndReturnsMockAnswerWithReferences() throws Exception {
         Long knowledgeBaseId = createKnowledgeBase();
-        RetrievedChunk chunk = new RetrievedChunk(
+        RetrievedChunk firstChunk = new RetrievedChunk(
                 101L,
                 202L,
                 knowledgeBaseId,
@@ -79,8 +81,21 @@ class ChatControllerTest {
                 0.93d,
                 "The handbook says annual leave carries over for one year."
         );
+        RetrievedChunk secondChunk = new RetrievedChunk(
+                102L,
+                203L,
+                knowledgeBaseId,
+                1,
+                0.81d,
+                "Unused leave must be scheduled with the employee's manager."
+        );
         when(retrievalService.retrieve(any(RetrieveRequest.class))).thenReturn(
-                new RetrieveResponse(knowledgeBaseId, "How long can leave carry over?", 5, List.of(chunk))
+                new RetrieveResponse(
+                        knowledgeBaseId,
+                        "How long can leave carry over?",
+                        5,
+                        List.of(firstChunk, secondChunk)
+                )
         );
 
         MvcResult result = mockMvc.perform(post("/api/chat/once")
@@ -93,6 +108,7 @@ class ChatControllerTest {
                                 """.formatted(knowledgeBaseId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.requestId").isString())
                 .andExpect(jsonPath("$.data.sessionId").isNumber())
                 .andExpect(jsonPath("$.data.userMessageId").isNumber())
                 .andExpect(jsonPath("$.data.assistantMessageId").isNumber())
@@ -102,7 +118,7 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.data.answer").value(
                         org.hamcrest.Matchers.containsString("How long can leave carry over?")
                 ))
-                .andExpect(jsonPath("$.data.references.length()").value(1))
+                .andExpect(jsonPath("$.data.references.length()").value(2))
                 .andExpect(jsonPath("$.data.references[0].chunkId").value(101))
                 .andExpect(jsonPath("$.data.references[0].knowledgeBaseId").value(knowledgeBaseId))
                 .andExpect(jsonPath("$.data.references[0].content").value(
@@ -111,18 +127,33 @@ class ChatControllerTest {
                 .andReturn();
 
         JsonNode response = objectMapper.readTree(result.getResponse().getContentAsString());
+        String requestId = response.at("/data/requestId").asText();
         Long sessionId = response.at("/data/sessionId").asLong();
         List<ChatMessage> messages = chatMessageService.findBySessionId(sessionId);
 
+        assertThat(requestId).isNotBlank();
         assertThat(chatSessionMapper.selectById(sessionId)).isNotNull();
         assertThat(messages).hasSize(2);
         assertThat(messages.get(0).getRole()).isEqualTo("USER");
         assertThat(messages.get(0).getContent()).isEqualTo("How long can leave carry over?");
+        assertThat(messages.get(0).getRequestId()).isEqualTo(requestId);
         assertThat(messages.get(1).getRole()).isEqualTo("ASSISTANT");
         assertThat(messages.get(1).getContent()).contains("Mock answer for prompt:");
+        assertThat(messages.get(1).getRequestId()).isEqualTo(requestId);
         assertThat(messages.get(1).getReferencesJson())
                 .contains("\"chunkId\":101")
                 .contains("\"knowledgeBaseId\":" + knowledgeBaseId);
+
+        mockMvc.perform(get("/api/audit/retrieval-logs/{requestId}", requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].requestId").value(requestId))
+                .andExpect(jsonPath("$.data[0].messageId").value(messages.get(0).getId()))
+                .andExpect(jsonPath("$.data[0].chunkId").value(101))
+                .andExpect(jsonPath("$.data[0].rankPosition").value(1))
+                .andExpect(jsonPath("$.data[1].chunkId").value(102))
+                .andExpect(jsonPath("$.data[1].rankPosition").value(2));
 
         ArgumentCaptor<RetrieveRequest> requestCaptor = ArgumentCaptor.forClass(RetrieveRequest.class);
         verify(retrievalService).retrieve(requestCaptor.capture());
@@ -142,6 +173,49 @@ class ChatControllerTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+
+        Integer logCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM retrieval_log",
+                Integer.class
+        );
+        assertThat(logCount).isZero();
+    }
+
+    @Test
+    void returnsMockAnswerWithoutPlaceholderLogsWhenRetrievalIsEmpty() throws Exception {
+        Long knowledgeBaseId = createKnowledgeBase();
+        when(retrievalService.retrieve(any(RetrieveRequest.class))).thenReturn(
+                new RetrieveResponse(knowledgeBaseId, "Unknown question", 5, List.of())
+        );
+
+        MvcResult result = mockMvc.perform(post("/api/chat/once")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "knowledgeBaseId": %d,
+                                  "question": "Unknown question"
+                                }
+                                """.formatted(knowledgeBaseId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requestId").isString())
+                .andExpect(jsonPath("$.data.answer").value(
+                        org.hamcrest.Matchers.containsString("Mock answer for prompt:")
+                ))
+                .andExpect(jsonPath("$.data.references.length()").value(0))
+                .andReturn();
+
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsString());
+        String requestId = response.at("/data/requestId").asText();
+
+        mockMvc.perform(get("/api/audit/retrieval-logs/{requestId}", requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+
+        Integer logCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM retrieval_log",
+                Integer.class
+        );
+        assertThat(logCount).isZero();
     }
 
     @Test

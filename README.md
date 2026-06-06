@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5.2 已完成。项目已支持文档处理、向量检索和 `/api/chat/once` 一次性 RAG 问答闭环；当前使用 Mock LLM，尚未接入真实 LLM 或 SSE。
+当前阶段：Phase 5.3 已完成。项目已支持文档处理、向量检索、一次性 RAG 问答和 requestId 检索日志追踪；当前使用 Mock LLM，尚未接入真实 LLM 或 SSE。
 
 ## 技术栈
 
@@ -150,7 +150,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索和一次性 RAG 问答接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 RAG 问答和检索日志查询接口。
 
 ## 知识库 CRUD API
 
@@ -566,6 +566,7 @@ curl -X POST http://localhost:8080/api/chat/once \
 响应包含：
 
 ```text
+requestId
 sessionId
 userMessageId
 assistantMessageId
@@ -573,9 +574,52 @@ answer
 references
 ```
 
-每次成功调用会保存一条 `USER` 消息和一条 `ASSISTANT` 消息。assistant 消息的 `references_json` 保存本次回答引用的 chunk 信息；响应中的 references 和持久化引用都来自 RetrievalService 返回的关系库 active chunk。
+每次成功调用会生成一个 UUID requestId，并保存一条 `USER` 消息和一条 `ASSISTANT` 消息。两条消息使用同一个 requestId；assistant 消息的 `references_json` 保存本次回答引用的 chunk 信息。响应中的 references 和持久化引用都来自 RetrievalService 返回的关系库 active chunk。
 
 本轮只实现普通 JSON 响应，使用 Mock LLM，不调用真实 LLM API，也不提供 SSE。
+
+## 检索日志与 requestId
+
+一次问答的追踪链路：
+
+```text
+POST /api/chat/once
+  ↓
+生成 requestId
+  ↓
+USER chat_message
+  ↓
+retrieval_log 多条记录
+  ↓
+ASSISTANT chat_message
+  ↓
+ChatOnceResponse.requestId
+```
+
+使用问答响应中的 requestId 查询检索日志：
+
+```bash
+curl http://localhost:8080/api/audit/retrieval-logs/{requestId}
+```
+
+日志按 `rankPosition` 升序返回，每条记录包含：
+
+```text
+requestId
+sessionId
+messageId
+knowledgeBaseId
+question
+retrieverType
+topK
+chunkId
+documentId
+rankPosition
+score
+createdAt
+```
+
+`messageId` 指向本次用户问题消息，`rankPosition` 从 1 开始。检索结果为空时不写占位日志，查询该 requestId 会返回空列表，问答仍会使用空上下文 prompt 正常返回 Mock LLM 响应。
 
 ## 当前已完成
 
@@ -638,14 +682,20 @@ references
 - 新增 `POST /api/chat/once`。
 - 一次性问答返回 answer 和 references，并将 references 序列化到 assistant message。
 - 新增 chat migration、持久化、业务编排、参数校验和 HTTP 闭环测试。
+- 新增 `retrieval_log` 表及 requestId、sessionId、knowledgeBaseId 索引。
+- `chat_message` 新增 `request_id` 字段和索引。
+- `/api/chat/once` 生成并返回 requestId，两条 chat message 使用同一 requestId。
+- ChatService 按检索顺序写入 retrieval_log，rankPosition 从 1 开始。
+- 新增 `GET /api/audit/retrieval-logs/{requestId}` 开发排查接口。
+- 新增 requestId、日志持久化、排序查询和空请求防脏数据测试。
 
 ## 本阶段刻意不做
 
 - 不接真实 LLM API。
 - 不做 SSE。
 - 不做 `/api/chat/stream`。
-- 不做 retrieval_log / llm_call_log。
-- 不做 request_id 链路追踪。
+- 不做 llm_call_log。
+- 不做 token 统计。
 - 不做复杂多轮记忆。
 - 不做 reranker。
 - 不做 Redis / Elasticsearch / RabbitMQ。
@@ -672,7 +722,8 @@ references
 - Phase 4.5 实现说明：`docs/round-notes/round-018-implementation-notes.md`
 - Phase 5.1 实现说明：`docs/round-notes/round-019-implementation-notes.md`
 - Phase 5.2 实现说明：`docs/round-notes/round-020-implementation-notes.md`
+- Phase 5.3 实现说明：`docs/round-notes/round-021-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.3：新增检索日志、request_id 链路追踪与问答可观测性。真实 LLM 与 SSE 仍留在后续阶段。
+进入 Phase 5.4：真实 LLM Client 与模型配置模板。SSE 仍留在后续阶段。

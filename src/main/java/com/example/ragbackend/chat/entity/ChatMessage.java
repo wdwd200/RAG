@@ -23,5 +23,7 @@ public class ChatMessage {
 
     private String referencesJson;
 
+    private String requestId;
+
     private LocalDateTime createdAt;
 }

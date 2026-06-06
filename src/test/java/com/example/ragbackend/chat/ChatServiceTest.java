@@ -2,10 +2,14 @@ package com.example.ragbackend.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.example.ragbackend.audit.entity.RetrievalLog;
+import com.example.ragbackend.audit.service.RetrievalLogService;
 import com.example.ragbackend.chat.dto.ChatOnceRequest;
 import com.example.ragbackend.chat.dto.ChatOnceResponse;
 import com.example.ragbackend.chat.entity.ChatMessage;
@@ -33,10 +37,12 @@ import org.mockito.ArgumentCaptor;
 
 class ChatServiceTest {
 
+    @SuppressWarnings("unchecked")
     @Test
     void orchestratesRetrievalPromptLlmAndMessagePersistence() {
         ChatSessionService sessionService = mock(ChatSessionService.class);
         ChatMessageService messageService = mock(ChatMessageService.class);
+        RetrievalLogService retrievalLogService = mock(RetrievalLogService.class);
         KnowledgeBaseService knowledgeBaseService = mock(KnowledgeBaseService.class);
         RetrievalService retrievalService = mock(RetrievalService.class);
         PromptBuilder promptBuilder = mock(PromptBuilder.class);
@@ -44,6 +50,7 @@ class ChatServiceTest {
         ChatService chatService = new ChatServiceImpl(
                 sessionService,
                 messageService,
+                retrievalLogService,
                 knowledgeBaseService,
                 retrievalService,
                 promptBuilder,
@@ -58,7 +65,13 @@ class ChatServiceTest {
         RetrieveResponse retrieval = new RetrieveResponse(7L, "question", 5, List.of(chunk));
 
         when(sessionService.create(7L, 1L, "question")).thenReturn(session);
-        when(messageService.create(30L, ChatMessageRole.USER, "question", null)).thenReturn(userMessage);
+        when(messageService.create(
+                eq(30L),
+                eq(ChatMessageRole.USER),
+                eq("question"),
+                isNull(),
+                anyString()
+        )).thenReturn(userMessage);
         when(retrievalService.retrieve(new RetrieveRequest(7L, "question", 5))).thenReturn(retrieval);
         when(promptBuilder.build(new RagPromptRequest(
                 "question",
@@ -67,14 +80,16 @@ class ChatServiceTest {
         when(llmService.complete(new LlmRequest("built prompt", null, null)))
                 .thenReturn(new LlmResponse("mock answer", "mock-rag-assistant", true, null));
         when(messageService.create(
-                org.mockito.ArgumentMatchers.eq(30L),
-                org.mockito.ArgumentMatchers.eq(ChatMessageRole.ASSISTANT),
-                org.mockito.ArgumentMatchers.eq("mock answer"),
+                eq(30L),
+                eq(ChatMessageRole.ASSISTANT),
+                eq("mock answer"),
+                anyString(),
                 anyString()
         )).thenReturn(assistantMessage);
 
         ChatOnceResponse response = chatService.once(new ChatOnceRequest(7L, null, "question", null));
 
+        assertThat(response.requestId()).isNotBlank();
         assertThat(response.sessionId()).isEqualTo(30L);
         assertThat(response.userMessageId()).isEqualTo(31L);
         assertThat(response.assistantMessageId()).isEqualTo(32L);
@@ -90,13 +105,41 @@ class ChatServiceTest {
         ));
         verify(llmService).complete(new LlmRequest("built prompt", null, null));
 
-        ArgumentCaptor<String> referencesCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<List<RetrievalLog>> logsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(retrievalLogService).saveLogs(logsCaptor.capture());
+        assertThat(logsCaptor.getValue()).hasSize(1);
+        RetrievalLog log = logsCaptor.getValue().get(0);
+        assertThat(log.getRequestId()).isEqualTo(response.requestId());
+        assertThat(log.getSessionId()).isEqualTo(30L);
+        assertThat(log.getMessageId()).isEqualTo(31L);
+        assertThat(log.getKnowledgeBaseId()).isEqualTo(7L);
+        assertThat(log.getQuestion()).isEqualTo("question");
+        assertThat(log.getRetrieverType()).isEqualTo("VECTOR");
+        assertThat(log.getTopK()).isEqualTo(5);
+        assertThat(log.getChunkId()).isEqualTo(11L);
+        assertThat(log.getDocumentId()).isEqualTo(12L);
+        assertThat(log.getRankPosition()).isEqualTo(1);
+        assertThat(log.getScore()).isEqualTo(0.91d);
+
+        ArgumentCaptor<String> userRequestIdCaptor = ArgumentCaptor.forClass(String.class);
         verify(messageService).create(
-                org.mockito.ArgumentMatchers.eq(30L),
-                org.mockito.ArgumentMatchers.eq(ChatMessageRole.ASSISTANT),
-                org.mockito.ArgumentMatchers.eq("mock answer"),
-                referencesCaptor.capture()
+                eq(30L),
+                eq(ChatMessageRole.USER),
+                eq("question"),
+                isNull(),
+                userRequestIdCaptor.capture()
         );
+        ArgumentCaptor<String> referencesCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> assistantRequestIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(messageService).create(
+                eq(30L),
+                eq(ChatMessageRole.ASSISTANT),
+                eq("mock answer"),
+                referencesCaptor.capture(),
+                assistantRequestIdCaptor.capture()
+        );
+        assertThat(userRequestIdCaptor.getValue()).isEqualTo(response.requestId());
+        assertThat(assistantRequestIdCaptor.getValue()).isEqualTo(response.requestId());
         assertThat(referencesCaptor.getValue())
                 .contains("\"chunkId\":11")
                 .contains("\"knowledgeBaseId\":7")
