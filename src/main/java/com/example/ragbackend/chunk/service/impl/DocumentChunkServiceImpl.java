@@ -49,6 +49,21 @@ public class DocumentChunkServiceImpl implements DocumentChunkService {
     }
 
     @Override
+    public List<DocumentChunkResponse> findActiveByIds(List<Long> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return List.of();
+        }
+
+        LambdaQueryWrapper<DocumentChunk> queryWrapper = new LambdaQueryWrapper<DocumentChunk>()
+                .in(DocumentChunk::getId, chunkIds)
+                .eq(DocumentChunk::getIsActive, true);
+        return documentChunkMapper.selectList(queryWrapper)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Override
     public void updateVectorId(Long chunkId, String vectorId) {
         LambdaUpdateWrapper<DocumentChunk> updateWrapper = new LambdaUpdateWrapper<DocumentChunk>()
                 .eq(DocumentChunk::getId, chunkId)

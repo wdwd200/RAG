@@ -31,12 +31,9 @@ class QdrantRequestFactory {
     Map<String, Object> searchBody(VectorSearchRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("vector", request.queryVector());
-        body.put("limit", request.limit());
+        body.put("limit", request.topK());
         body.put("with_payload", true);
-
-        if (request.knowledgeBaseId() != null) {
-            body.put("filter", matchFilter("knowledgeBaseId", request.knowledgeBaseId()));
-        }
+        body.put("filter", matchFilter("knowledgeBaseId", request.knowledgeBaseId()));
         if (request.scoreThreshold() != null) {
             body.put("score_threshold", request.scoreThreshold());
         }

@@ -24,7 +24,7 @@ class QdrantVectorStoreServiceTest {
     }
 
     @Test
-    void searchValidatesLimitBeforeCallingQdrant() {
+    void searchValidatesTopKAndKnowledgeBaseBeforeCallingQdrant() {
         QdrantVectorStoreService service = new QdrantVectorStoreService(properties(), RestClient.builder());
         VectorSearchRequest request = new VectorSearchRequest(List.of(0.1f, 0.2f, 0.3f), 0, null, null);
 

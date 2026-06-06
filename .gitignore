@@ -21,6 +21,7 @@ Thumbs.db
 .env.production
 .env.test
 *.env.local
+.env.*.local
 !.env.example
 !.env.qwen.example
 

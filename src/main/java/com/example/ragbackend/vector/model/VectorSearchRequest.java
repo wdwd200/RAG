@@ -4,7 +4,7 @@ import java.util.List;
 
 public record VectorSearchRequest(
         List<Float> queryVector,
-        int limit,
+        int topK,
         Long knowledgeBaseId,
         Double scoreThreshold
 ) {

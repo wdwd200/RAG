@@ -19,6 +19,10 @@ app:
   embedding:
     provider: mock
     dimension: 8
+    qwen:
+      model: text-embedding-v4
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key:
   qdrant:
     host: localhost
     http-port: 6333

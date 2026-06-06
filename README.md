@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 4.3 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、chunk 查询接口、处理状态机、embedding 抽象、Mock Embedding、Qdrant 向量库访问层，以及将已 CHUNKED 文档索引到向量库。
+当前阶段：Phase 4.4 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、文档索引、Mock / 千问 Embedding、Qdrant 向量库访问，以及按 `knowledgeBaseId` 隔离的向量检索 API。
 
 ## 技术栈
 
@@ -83,7 +83,7 @@ APP_EMBEDDING_PROVIDER=mock
 APP_EMBEDDING_DIMENSION=384
 ```
 
-当前只提供 Mock Embedding，用于验证后续向量入库流程的代码边界。Mock 向量由文本 hash 确定性生成，同一段文本多次生成结果稳定一致；当前不连接真实 embedding API。
+测试和默认本地配置使用 Mock Embedding。Mock 向量由文本 hash 确定性生成，同一段文本多次生成结果稳定一致。将 `APP_EMBEDDING_PROVIDER` 设置为 `qwen` 后，`QwenEmbeddingClient` 会通过 DashScope OpenAI-compatible embeddings API 调用真实千问 embedding。
 
 默认 Qdrant 配置：
 
@@ -94,9 +94,17 @@ QDRANT_COLLECTION_NAME=rag_chunks
 QDRANT_DISTANCE=COSINE
 ```
 
-`app.qdrant.vector-size` 默认跟 `APP_EMBEDDING_DIMENSION` 保持一致。当前 mock embedding 默认维度是 384；后续切换千问 `text-embedding-v4` 时，可以把 `APP_EMBEDDING_DIMENSION` 改为 1024。
+`app.qdrant.vector-size` 默认跟 `APP_EMBEDDING_DIMENSION` 保持一致。Mock embedding 默认是 384 维，千问 `text-embedding-v4` 建议使用 1024 维。如果 Qdrant collection 已按 384 维创建，切换到 1024 维前必须删除旧 collection 或使用新的 `QDRANT_COLLECTION_NAME`，否则索引和检索会因向量维度不一致失败。
 
-`.env.qwen.example` 是后续启用千问 embedding 的配置模板。本阶段默认仍使用 mock embedding，不读取真实 `DASHSCOPE_API_KEY`。如果本地 `.env` 或 IDEA Run Configuration 强制设置 `APP_EMBEDDING_PROVIDER=qwen`，当前版本还没有 `QwenEmbeddingClient`，应用会因为缺少 `EmbeddingClient` Bean 而无法完成真实模型调用。
+`.env.qwen.example` 是启用千问 embedding 的配置模板。真实 `DASHSCOPE_API_KEY` 只允许填写在本地 `.env`、环境变量或 IDEA Run Configuration 中，不得提交到 Git。启用配置：
+
+```text
+APP_EMBEDDING_PROVIDER=qwen
+APP_EMBEDDING_DIMENSION=1024
+QWEN_EMBEDDING_MODEL=text-embedding-v4
+QWEN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_API_KEY=replace-with-your-api-key
+```
 
 ## 健康检查
 
@@ -352,12 +360,12 @@ EmbeddingService
   ↓
 EmbeddingClient
   ↓
-MockEmbeddingClient
+MockEmbeddingClient 或 QwenEmbeddingClient
   ↓
 生成固定维度向量
 ```
 
-`EmbeddingService` 是业务侧入口，负责文本校验和向量维度校验。`EmbeddingClient` 只表达“文本到向量”的模型适配接口。`MockEmbeddingClient` 只负责在 `app.embedding.provider=mock` 时生成确定性的伪向量，维度来自 `app.embedding.dimension`。
+`EmbeddingService` 是业务侧入口，负责文本校验和向量维度校验。`EmbeddingClient` 只表达“文本到向量”的模型适配接口。`MockEmbeddingClient` 在 `app.embedding.provider=mock` 时生成确定性伪向量；`QwenEmbeddingClient` 只在 provider 为 `qwen` 时负责千问 HTTP 适配、鉴权、响应解析和维度校验。
 
 当前没有开放 embedding HTTP 接口。embedding 流程只通过 `POST /api/documents/{id}/index` 接入文档索引链路，不在 `/process` 阶段提前执行。
 
@@ -366,7 +374,7 @@ MockEmbeddingClient
 当前 VectorStore 调用链：
 
 ```text
-未来业务服务
+DocumentIndexingService / RetrievalService
   ↓
 VectorStoreService
   ↓
@@ -377,7 +385,7 @@ Qdrant collection rag_chunks
 
 `VectorStoreService` 是业务侧向量库入口，提供 collection 初始化、单条 chunk vector upsert、向量 search、按 documentId 删除向量的能力。`QdrantVectorStoreService` 只负责把这些操作适配成 Qdrant HTTP API 请求。
 
-当前 `VectorStoreService` 只接入 `DocumentIndexingService`。也就是说，文档处理完成后先停在 `CHUNKED`；只有显式调用 `POST /api/documents/{id}/index` 后，才会生成 embedding、写入 Qdrant，并在成功后进入 `INDEXED`。
+`DocumentIndexingService` 通过 `VectorStoreService` 写入向量，`RetrievalService` 通过同一入口检索向量。文档处理完成后先停在 `CHUNKED`；只有显式调用 `POST /api/documents/{id}/index` 后，才会生成 embedding、写入 Qdrant，并在成功后进入 `INDEXED`。
 
 ## 文档索引调用链
 
@@ -421,6 +429,40 @@ Qdrant 写入失败：FAILED + failedStage=INDEXING
 ```
 
 当前关系库中的 `document` 和 `document_chunk` 是事实源，Qdrant 是检索索引。如果部分 chunk 已经写入 Qdrant 后失败，本轮暂不做补偿删除，后续需要补充重建索引或补偿删除策略。
+
+## 向量检索 API
+
+```bash
+curl -X POST http://localhost:8080/api/retrieval/search \
+  -H "Content-Type: application/json" \
+  -d '{"knowledgeBaseId":1,"question":"员工年假可以累计多久？","topK":5}'
+```
+
+`knowledgeBaseId` 和 `question` 必填。`topK` 为空时默认是 5，允许范围是 1 到 20，超过上限返回参数校验错误。
+
+检索调用链：
+
+```text
+POST /api/retrieval/search
+  ↓
+RetrievalController
+  ↓
+RetrievalService
+  ↓
+EmbeddingService
+  ↓
+EmbeddingClient（mock 或 qwen）
+  ↓
+VectorStoreService.search
+  ↓
+Qdrant knowledgeBaseId filter
+  ↓
+DocumentChunkService 回查关系库 active chunk
+  ↓
+返回 RetrievedChunk
+```
+
+Qdrant search 始终使用 `knowledgeBaseId` payload filter，不能跨知识库检索。Qdrant 返回的 `chunkId` 会回查关系库；不存在、已 inactive 或不属于请求知识库的 chunk 会被跳过，最终 `content` 始终来自 `document_chunk`。
 
 ## 当前已完成
 
@@ -467,15 +509,18 @@ Qdrant 写入失败：FAILED + failedStage=INDEXING
 - 索引成功后 document 状态流转到 `INDEXED`。
 - embedding / Qdrant 写入失败时记录 `FAILED`、`failedStage` 和 `errorMessage`。
 - 新增文档索引相关服务测试和接口测试。
+- 新增 `QwenEmbeddingClient`，支持 DashScope OpenAI-compatible batch embeddings API。
+- 新增 `RetrievalService`，集中编排 query embedding、向量检索和关系库 chunk 回查。
+- 新增 `POST /api/retrieval/search`。
+- Qdrant search 强制使用 `knowledgeBaseId` payload filter。
+- 检索结果只返回关系库中存在且 active 的 chunk，关系库 content 是事实源。
+- 新增千问客户端、检索服务、参数校验和知识库过滤相关测试。
 
 ## 本阶段刻意不做
 
-- 不接真实 embedding API。
-- 不读取 `DASHSCOPE_API_KEY`。
-- 不实现 `QwenEmbeddingClient`。
-- 不实现向量检索 API。
 - 不做 LLM。
 - 不做 SSE。
+- 不做 RAG 回答。
 - 不做 reranker。
 - 不做 Redis / Elasticsearch / RabbitMQ。
 - 不做异步处理。
@@ -496,7 +541,8 @@ Qdrant 写入失败：FAILED + failedStage=INDEXING
 - Phase 4.1 实现说明：`docs/round-notes/round-014-implementation-notes.md`
 - Phase 4.2 实现说明：`docs/round-notes/round-015-implementation-notes.md`
 - Phase 4.3 实现说明：`docs/round-notes/round-016-implementation-notes.md`
+- Phase 4.4 实现说明：`docs/round-notes/round-017-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 4.4：向量检索 API 与 `knowledgeBaseId` 过滤。
+进入 Phase 4.5：Phase 4 收尾、真实 embedding + Qdrant 检索链路验证与导读整理。

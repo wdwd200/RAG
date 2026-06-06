@@ -34,7 +34,7 @@ class VectorStoreModelTest {
         VectorSearchResult result = new VectorSearchResult("1", 1L, 2L, 3L, 4, "hash", 5, 0.91d);
 
         assertThat(request.queryVector()).containsExactly(0.1f, 0.2f);
-        assertThat(request.limit()).isEqualTo(10);
+        assertThat(request.topK()).isEqualTo(10);
         assertThat(request.knowledgeBaseId()).isEqualTo(3L);
         assertThat(request.scoreThreshold()).isEqualTo(0.8d);
         assertThat(result.pointId()).isEqualTo("1");

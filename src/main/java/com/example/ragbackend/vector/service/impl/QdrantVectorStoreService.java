@@ -133,7 +133,7 @@ public class QdrantVectorStoreService implements VectorStoreService {
     }
 
     private void validateSearchRequest(VectorSearchRequest request) {
-        if (request == null || request.limit() <= 0) {
+        if (request == null || request.topK() <= 0 || request.knowledgeBaseId() == null) {
             throw new BusinessException(VECTOR_SEARCH_REQUEST_INVALID_CODE, "Vector search request is invalid");
         }
         validateVectorDimension(request.queryVector());
