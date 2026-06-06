@@ -23,6 +23,9 @@ app:
       model: text-embedding-v4
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       api-key:
+  llm:
+    provider: mock
+    model: mock-rag-assistant
   qdrant:
     host: localhost
     http-port: 6333

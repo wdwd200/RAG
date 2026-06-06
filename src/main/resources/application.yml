@@ -58,6 +58,9 @@ app:
       model: ${QWEN_EMBEDDING_MODEL:text-embedding-v4}
       base-url: ${QWEN_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       api-key: ${DASHSCOPE_API_KEY:}
+  llm:
+    provider: ${APP_LLM_PROVIDER:mock}
+    model: ${APP_LLM_MODEL:mock-rag-assistant}
   qdrant:
     host: ${QDRANT_HOST:localhost}
     http-port: ${QDRANT_HTTP_PORT:6333}

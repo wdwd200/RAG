@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 4 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、文档从 `CHUNKED` 索引到 `INDEXED`、Mock / 千问 Embedding、Qdrant 向量索引，以及按 `knowledgeBaseId` 隔离的向量检索 API。
+当前阶段：Phase 5.1 已完成。项目已支持文档处理与向量检索，并新增 LLM 调用抽象、Mock LLM 和 RAG PromptBuilder；当前尚未提供聊天 API，也未接入真实 LLM。
 
 ## 技术栈
 
@@ -105,6 +105,15 @@ QWEN_EMBEDDING_MODEL=text-embedding-v4
 QWEN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_API_KEY=replace-with-your-api-key
 ```
+
+默认 LLM 配置：
+
+```text
+APP_LLM_PROVIDER=mock
+APP_LLM_MODEL=mock-rag-assistant
+```
+
+Phase 5.1 只提供 `MockLlmClient`，不会读取真实 LLM API key，也不会调用 Qwen 或 OpenAI LLM。LLM 配置与 embedding 配置相互独立。
 
 ## 健康检查
 
@@ -500,6 +509,34 @@ Mock 验证使用 `rag_chunks_mock_384`：
 
 真实 API key 仅从本地 `.env` 读取，没有写入代码、README 或 Git。Mock 384 维和 Qwen 1024 维使用不同 collection。
 
+## LLM 抽象与 PromptBuilder
+
+当前 LLM 调用链：
+
+```text
+未来 ChatService
+  ↓
+PromptBuilder
+  ↓
+LlmService
+  ↓
+LlmClient
+  ↓
+MockLlmClient
+```
+
+`PromptBuilder` 只根据用户问题和上下文片段构造 prompt，不调用模型、数据库或 Qdrant。生成的 RAG prompt 包含：
+
+- 用户问题。
+- 检索到的上下文片段。
+- 只能基于上下文回答的约束。
+- 上下文不足时说明“根据当前知识库内容无法确定”的约束。
+- 使用 `[片段N]` 标注引用来源的要求。
+
+`LlmService` 是业务侧 LLM 入口，负责校验 prompt、补充默认模型并调用 `LlmClient`。`MockLlmClient` 返回稳定、可预测的 mock answer，用于后续 chat 闭环测试。
+
+当前没有开放 LLM 或 chat HTTP 接口。`/api/chat/once`、chat 数据表和真实 LLM Client 留到后续阶段。
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -551,10 +588,16 @@ Mock 验证使用 `rag_chunks_mock_384`：
 - Qdrant search 强制使用 `knowledgeBaseId` payload filter。
 - 检索结果只返回关系库中存在且 active 的 chunk，关系库 content 是事实源。
 - 新增千问客户端、检索服务、参数校验和知识库过滤相关测试。
+- 新增 LLM 配置 `app.llm.provider` 和 `app.llm.model`。
+- 新增 `LlmClient`、`MockLlmClient`、`LlmService` 和 LLM 请求响应模型。
+- 新增 `PromptBuilder`、`RagPromptBuilder` 和 prompt 上下文模型。
+- 新增 Mock LLM、LlmService 和 PromptBuilder 单元测试。
 
 ## 本阶段刻意不做
 
-- 不做 LLM。
+- 不接真实 LLM API。
+- 不做 `/api/chat/once`。
+- 不创建 chat 表。
 - 不做 SSE。
 - 不做 RAG 回答。
 - 不做 reranker。
@@ -580,7 +623,8 @@ Mock 验证使用 `rag_chunks_mock_384`：
 - Phase 4.4 实现说明：`docs/round-notes/round-017-implementation-notes.md`
 - Phase 4 总结：`docs/phase-notes/phase-004-summary.md`
 - Phase 4.5 实现说明：`docs/round-notes/round-018-implementation-notes.md`
+- Phase 5.1 实现说明：`docs/round-notes/round-019-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.1：新增 `LlmClient` 抽象、Mock LLM 与 `PromptBuilder`，开始构建 RAG 问答闭环。当前版本尚未接入 LLM，也不会生成最终回答。
+进入 Phase 5.2：新增 chat 基础表与 `/api/chat/once` JSON 闭环，编排 retrieval、PromptBuilder 和 LlmService。真实 LLM 与 SSE 仍不在下一轮范围内。
