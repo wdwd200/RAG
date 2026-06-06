@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 4.4 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、文档索引、Mock / 千问 Embedding、Qdrant 向量库访问，以及按 `knowledgeBaseId` 隔离的向量检索 API。
+当前阶段：Phase 4 已完成。项目已支持 txt/md 文档解析、固定窗口文本切分、`document_chunk` 入库、文档从 `CHUNKED` 索引到 `INDEXED`、Mock / 千问 Embedding、Qdrant 向量索引，以及按 `knowledgeBaseId` 隔离的向量检索 API。
 
 ## 技术栈
 
@@ -464,6 +464,42 @@ DocumentChunkService 回查关系库 active chunk
 
 Qdrant search 始终使用 `knowledgeBaseId` payload filter，不能跨知识库检索。Qdrant 返回的 `chunkId` 会回查关系库；不存在、已 inactive 或不属于请求知识库的 chunk 会被跳过，最终 `content` 始终来自 `document_chunk`。
 
+## Phase 4 手动验证结果
+
+本地 Docker、PostgreSQL 和 Qdrant 环境已完成以下两条链路验证：
+
+```text
+上传文档
+  ↓
+POST /api/documents/{id}/process
+  ↓
+document.status = CHUNKED
+  ↓
+POST /api/documents/{id}/index
+  ↓
+document.status = INDEXED
+  ↓
+POST /api/retrieval/search
+  ↓
+返回当前 knowledgeBaseId 下的 active chunk
+```
+
+Mock 验证使用 `rag_chunks_mock_384`：
+
+- 文档成功从 `UPLOADED` 流转到 `CHUNKED`，再流转到 `INDEXED`。
+- 7 个 active chunk 全部写回 `vectorId`。
+- 目标知识库返回 5 条检索结果。
+- 隔离知识库返回 0 条结果。
+
+千问验证使用 `rag_chunks_qwen_1024`：
+
+- `text-embedding-v4` 成功生成 1024 维向量。
+- 3 个 active chunk 全部写入 Qdrant 并写回 `vectorId`。
+- 真实语义检索返回 3 条结果。
+- 隔离知识库返回 0 条结果。
+
+真实 API key 仅从本地 `.env` 读取，没有写入代码、README 或 Git。Mock 384 维和 Qwen 1024 维使用不同 collection。
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -542,7 +578,9 @@ Qdrant search 始终使用 `knowledgeBaseId` payload filter，不能跨知识库
 - Phase 4.2 实现说明：`docs/round-notes/round-015-implementation-notes.md`
 - Phase 4.3 实现说明：`docs/round-notes/round-016-implementation-notes.md`
 - Phase 4.4 实现说明：`docs/round-notes/round-017-implementation-notes.md`
+- Phase 4 总结：`docs/phase-notes/phase-004-summary.md`
+- Phase 4.5 实现说明：`docs/round-notes/round-018-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 4.5：Phase 4 收尾、真实 embedding + Qdrant 检索链路验证与导读整理。
+进入 Phase 5.1：新增 `LlmClient` 抽象、Mock LLM 与 `PromptBuilder`，开始构建 RAG 问答闭环。当前版本尚未接入 LLM，也不会生成最终回答。
