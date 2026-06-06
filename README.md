@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5.1 已完成。项目已支持文档处理与向量检索，并新增 LLM 调用抽象、Mock LLM 和 RAG PromptBuilder；当前尚未提供聊天 API，也未接入真实 LLM。
+当前阶段：Phase 5.2 已完成。项目已支持文档处理、向量检索和 `/api/chat/once` 一次性 RAG 问答闭环；当前使用 Mock LLM，尚未接入真实 LLM 或 SSE。
 
 ## 技术栈
 
@@ -150,7 +150,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查接口、Qdrant 健康检查接口、知识库 CRUD 接口、文档元数据接口、文件上传接口、文档处理接口和 chunk 查询接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索和一次性 RAG 问答接口。
 
 ## 知识库 CRUD API
 
@@ -511,10 +511,18 @@ Mock 验证使用 `rag_chunks_mock_384`：
 
 ## LLM 抽象与 PromptBuilder
 
-当前 LLM 调用链：
+当前 RAG 问答调用链：
 
 ```text
-未来 ChatService
+POST /api/chat/once
+  ↓
+ChatController
+  ↓
+ChatService
+  ↓
+ChatSessionService / ChatMessageService
+  ↓
+RetrievalService
   ↓
 PromptBuilder
   ↓
@@ -523,6 +531,10 @@ LlmService
 LlmClient
   ↓
 MockLlmClient
+  ↓
+保存 assistant message
+  ↓
+返回 answer + references
 ```
 
 `PromptBuilder` 只根据用户问题和上下文片段构造 prompt，不调用模型、数据库或 Qdrant。生成的 RAG prompt 包含：
@@ -533,9 +545,37 @@ MockLlmClient
 - 上下文不足时说明“根据当前知识库内容无法确定”的约束。
 - 使用 `[片段N]` 标注引用来源的要求。
 
-`LlmService` 是业务侧 LLM 入口，负责校验 prompt、补充默认模型并调用 `LlmClient`。`MockLlmClient` 返回稳定、可预测的 mock answer，用于后续 chat 闭环测试。
+`LlmService` 是业务侧 LLM 入口，负责校验 prompt、补充默认模型并调用 `LlmClient`。`MockLlmClient` 返回稳定、可预测的 mock answer，用于 chat 闭环测试。
 
-当前没有开放 LLM 或 chat HTTP 接口。`/api/chat/once`、chat 数据表和真实 LLM Client 留到后续阶段。
+## 一次性 RAG 问答 API
+
+```bash
+curl -X POST http://localhost:8080/api/chat/once \
+  -H "Content-Type: application/json" \
+  -d '{"knowledgeBaseId":1,"sessionId":null,"question":"这份文档讲了什么？","topK":5}'
+```
+
+请求规则：
+
+- `knowledgeBaseId` 必填。
+- `question` 必填且不能为空。
+- `topK` 为空时默认使用 5，允许范围为 1 到 20。
+- `sessionId` 为空时创建新会话。
+- `sessionId` 不为空时必须存在，且必须属于请求中的知识库。
+
+响应包含：
+
+```text
+sessionId
+userMessageId
+assistantMessageId
+answer
+references
+```
+
+每次成功调用会保存一条 `USER` 消息和一条 `ASSISTANT` 消息。assistant 消息的 `references_json` 保存本次回答引用的 chunk 信息；响应中的 references 和持久化引用都来自 RetrievalService 返回的关系库 active chunk。
+
+本轮只实现普通 JSON 响应，使用 Mock LLM，不调用真实 LLM API，也不提供 SSE。
 
 ## 当前已完成
 
@@ -592,14 +632,21 @@ MockLlmClient
 - 新增 `LlmClient`、`MockLlmClient`、`LlmService` 和 LLM 请求响应模型。
 - 新增 `PromptBuilder`、`RagPromptBuilder` 和 prompt 上下文模型。
 - 新增 Mock LLM、LlmService 和 PromptBuilder 单元测试。
+- 新增 `chat_session` 和 `chat_message` 表及索引。
+- 新增 ChatSession、ChatMessage、Mapper 和基础数据访问 Service。
+- 新增 `ChatService`，编排 session、消息持久化、retrieval、prompt 和 LLM 调用。
+- 新增 `POST /api/chat/once`。
+- 一次性问答返回 answer 和 references，并将 references 序列化到 assistant message。
+- 新增 chat migration、持久化、业务编排、参数校验和 HTTP 闭环测试。
 
 ## 本阶段刻意不做
 
 - 不接真实 LLM API。
-- 不做 `/api/chat/once`。
-- 不创建 chat 表。
 - 不做 SSE。
-- 不做 RAG 回答。
+- 不做 `/api/chat/stream`。
+- 不做 retrieval_log / llm_call_log。
+- 不做 request_id 链路追踪。
+- 不做复杂多轮记忆。
 - 不做 reranker。
 - 不做 Redis / Elasticsearch / RabbitMQ。
 - 不做异步处理。
@@ -624,7 +671,8 @@ MockLlmClient
 - Phase 4 总结：`docs/phase-notes/phase-004-summary.md`
 - Phase 4.5 实现说明：`docs/round-notes/round-018-implementation-notes.md`
 - Phase 5.1 实现说明：`docs/round-notes/round-019-implementation-notes.md`
+- Phase 5.2 实现说明：`docs/round-notes/round-020-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.2：新增 chat 基础表与 `/api/chat/once` JSON 闭环，编排 retrieval、PromptBuilder 和 LlmService。真实 LLM 与 SSE 仍不在下一轮范围内。
+进入 Phase 5.3：新增检索日志、request_id 链路追踪与问答可观测性。真实 LLM 与 SSE 仍留在后续阶段。
