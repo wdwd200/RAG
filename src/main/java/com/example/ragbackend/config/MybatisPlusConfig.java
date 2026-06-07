@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
         "com.example.ragbackend.audit.mapper",
         "com.example.ragbackend.chat.mapper",
         "com.example.ragbackend.chunk.mapper",
+        "com.example.ragbackend.evaluation.mapper",
         "com.example.ragbackend.knowledge.mapper",
         "com.example.ragbackend.document.mapper"
 })

@@ -1,0 +1,11 @@
+package com.example.ragbackend.evaluation.dto;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotEmpty;
+import java.util.List;
+
+public record EvaluationQuestionImportRequest(
+        @NotEmpty
+        List<@Valid EvaluationQuestionCreateRequest> questions
+) {
+}

@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及可选的千问真实 embedding 和 LLM；默认仍使用 Mock Embedding 与 Mock LLM。
+当前阶段：Phase 6.1 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及 evaluation dataset / evaluation question 评测集基础管理；默认仍使用 Mock Embedding 与 Mock LLM。
 
 ## 技术栈
 
@@ -165,7 +165,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答，以及检索日志和 LLM 调用日志查询接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答、检索日志、LLM 调用日志查询接口，以及评测集 / 评测问题管理接口。
 
 ## 知识库 CRUD API
 
@@ -685,6 +685,64 @@ createdAt
 
 每次 LLM 调用会记录 provider、modelName、latencyMs、success 和 errorMessage。当前 LLM Client 没有暴露真实 usage，因此 `promptTokens` 和 `completionTokens` 保持为空。成功日志跟随问答主事务提交；LLM 失败日志使用独立事务保存，随后继续抛出原异常，主问答事务会回滚。
 
+## 评测集 API
+
+Phase 6.1 新增 evaluation dataset / evaluation question 基础管理，用于人工维护后续检索评测所需的标准问题和相关 chunk 标注。本轮只负责录入数据，不运行检索评测，也不计算 Recall@K、HitRate@K 或 MRR。
+
+创建评测集：
+
+```bash
+curl -X POST http://localhost:8080/api/evaluation/datasets \
+  -H "Content-Type: application/json" \
+  -d '{"name":"HR handbook eval","knowledgeBaseId":1,"description":"Manual retrieval labels"}'
+```
+
+查询评测集：
+
+```bash
+curl http://localhost:8080/api/evaluation/datasets
+curl http://localhost:8080/api/evaluation/datasets/1
+```
+
+创建单条评测问题：
+
+```bash
+curl -X POST http://localhost:8080/api/evaluation/datasets/1/questions \
+  -H "Content-Type: application/json" \
+  -d '{"question":"员工年假可以累计多久？","groundTruthAnswer":"员工年假最多可累计至下一年度第一季度末。","relevantChunkIds":[12],"questionType":"fact"}'
+```
+
+批量导入评测问题：
+
+```bash
+curl -X POST http://localhost:8080/api/evaluation/datasets/1/questions/import \
+  -H "Content-Type: application/json" \
+  -d '{"questions":[{"question":"员工年假可以累计多久？","groundTruthAnswer":"员工年假最多可累计至下一年度第一季度末。","relevantChunkIds":[12],"questionType":"fact"}]}'
+```
+
+查询评测问题：
+
+```bash
+curl http://localhost:8080/api/evaluation/datasets/1/questions
+curl http://localhost:8080/api/evaluation/questions/1
+```
+
+第一版评测集来源建议：
+
+```text
+先上传示例文档
+  ↓
+POST /api/documents/{id}/process 生成 chunks
+  ↓
+GET /api/documents/{documentId}/chunks 查看 chunk
+  ↓
+人工选择 relevantChunkIds
+  ↓
+写入 evaluation_question
+```
+
+创建问题时，`relevantChunkIds` 必须存在、必须是 active chunk，并且必须属于评测集对应的 `knowledgeBaseId`。系统会把请求中的 chunkId 列表保存为 `relevant_chunk_ids_json`，并从关系库 chunk 读取 `contentHash` 保存到 `relevant_content_hashes_json`，用于后续 chunk 重新切分后的辅助迁移判断。
+
 ## Phase 5 完整链路验证
 
 Phase 5 收尾时已实际启动 PostgreSQL、Qdrant 和应用，完成以下闭环：
@@ -806,6 +864,13 @@ LLM model: qwen-plus
 - 完成 Mock Embedding + Mock LLM 的 RAG 问答完整链路验证。
 - 完成 `text-embedding-v4` + `qwen-plus` 的真实 RAG 问答完整链路验证。
 - 完成 Phase 5 问答、SSE 和 requestId 审计链路导读。
+- 新增 `evaluation_dataset` 和 `evaluation_question` 表。
+- 新增 EvaluationDataset / EvaluationQuestion Entity、Mapper、Service、DTO 和 Controller。
+- 新增评测集创建、列表和详情 API。
+- 新增评测问题单条创建、批量导入、列表和详情 API。
+- 创建评测问题时校验 relevantChunkIds 存在、active 且属于 dataset 对应知识库。
+- 创建 / 导入评测问题时记录 relevant chunk contentHash，并更新 dataset.questionCount。
+- 新增评测模块相关 HTTP 集成测试。
 
 ## 本阶段刻意不做
 
@@ -820,6 +885,11 @@ LLM model: qwen-plus
 - 不做复杂重试。
 - 不做 PDF / docx 解析。
 - 不做登录、JWT、Spring Security 权限系统。
+- 不做 evaluation_report 表。
+- 不运行批量检索评测。
+- 不计算 Recall@K / HitRate@K / MRR。
+- 不做公开数据集自动导入。
+- 不做 LLM-as-judge。
 
 ## 阶段文档
 
@@ -843,7 +913,8 @@ LLM model: qwen-plus
 - Phase 5.5 实现说明：`docs/round-notes/round-023-implementation-notes.md`
 - Phase 5 总结：`docs/phase-notes/phase-005-summary.md`
 - Phase 5.6 实现说明：`docs/round-notes/round-024-implementation-notes.md`
+- Phase 6.1 实现说明：`docs/round-notes/round-025-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 6.1：`evaluation_dataset` / `evaluation_question` 表与评测集导入基础。下一阶段重点是评测模块，不是继续增加模型供应商或模型能力。
+进入 Phase 6.2：检索评测运行与 Recall@K / HitRate@K / MRR 计算。下一阶段重点是基于 evaluation questions 批量调用检索链路并生成指标，不是继续增加模型供应商或模型能力。
