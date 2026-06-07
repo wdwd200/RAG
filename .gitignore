@@ -32,5 +32,8 @@ build/
 ### Local storage ###
 /storage/
 
+### Demo local generated files ###
+docs/demo/*.import.json
+
 
 AGENTS.md

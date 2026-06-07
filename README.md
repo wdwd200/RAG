@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 6.3 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志、evaluation dataset / evaluation question 评测集基础管理、检索评测运行与 Recall@K / HitRate@K / MRR 指标计算，以及 report summary / bad cases 分析查询；默认仍使用 Mock Embedding 与 Mock LLM。
+当前阶段：Phase 6.4 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志、evaluation dataset / evaluation question 评测集基础管理、检索评测运行与 Recall@K / HitRate@K / MRR 指标计算、report summary / bad cases 分析查询，以及可复现的 Phase 6 demo 文档与操作指南；默认仍使用 Mock Embedding 与 Mock LLM。
 
 ## 技术栈
 
@@ -40,13 +40,15 @@ docker compose ps
 
 ## 本地启动应用
 
-确认本地已安装 Java 17 和 Maven，并且 PostgreSQL 容器已启动。
+运行自动测试只需要本地已安装 Java 17 和 Maven。启动应用连接真实 PostgreSQL / Qdrant 时，需要先启动 Docker Compose。
 
 运行测试：
 
 ```bash
 mvn test
 ```
+
+自动测试使用 H2、mock provider 和固定测试数据。`mvn test` 不依赖 Docker，不依赖 Qdrant，不依赖真实 embedding，也不依赖真实 LLM。
 
 推荐启动应用：
 
@@ -795,6 +797,68 @@ summary 中的 `badCaseCount` 是上述三类 bad case 总数，`noHitCount`、`
 
 当前评测运行只调用 `RetrievalService`，不调用 `ChatService`、`LlmService`、`PromptBuilder` 或任何 LLM Client，不生成 answer，也不消耗真实 LLM 额度。第一版同步执行；任一问题检索失败时，report 标记为 `FAILED` 并保存 `errorMessage`。
 
+## Phase 6 Demo
+
+Phase 6.4 新增了可复现评测 demo 资产，用于按固定文档跑通检索评测主链路：
+
+```text
+创建知识库
+  ↓
+上传示例文档
+  ↓
+process
+  ↓
+index
+  ↓
+查看 chunks
+  ↓
+创建 evaluation dataset
+  ↓
+导入 evaluation questions
+  ↓
+运行 evaluation
+  ↓
+查看 report summary / bad cases
+```
+
+示例文档位置：
+
+```text
+docs/demo/sample-documents/hr-handbook.md
+docs/demo/sample-documents/expense-policy.md
+docs/demo/sample-documents/engineering-guide.md
+```
+
+示例评测问题模板：
+
+```text
+docs/demo/sample-evaluation-questions.json
+```
+
+完整操作指南：
+
+```text
+docs/demo/phase-006-demo-guide.md
+```
+
+示例评测集说明和报告解读：
+
+```text
+docs/demo/sample-evaluation-dataset.md
+docs/demo/sample-evaluation-report.md
+```
+
+可选辅助脚本：
+
+```text
+scripts/demo/phase6-demo.ps1
+scripts/demo/README.md
+```
+
+第一版评测集的 `relevantChunkIds` 需要人工根据 `GET /api/documents/{documentId}/chunks` 返回的 active chunks 选择。`chunkId` 是数据库运行时生成的，不同数据库和不同演示轮次中可能不同，所以模板中的 `REPLACE_WITH_..._CHUNK_ID` 必须替换为本地真实数字 chunkId 后再导入。模板中的 `sourceHint` 只是人工定位辅助字段，调用导入接口前需要删除。
+
+真实链路 demo 依赖 Docker，因为需要 PostgreSQL 和 Qdrant。使用 mock provider 时不需要 API key；如果切换到 Qwen embedding 或 Qwen LLM，则依赖本地 `DASHSCOPE_API_KEY`，真实 key 只放在 `.env`、环境变量或 IDEA Run Configuration 中，不提交到 Git。
+
 ## Phase 5 完整链路验证
 
 Phase 5 收尾时已实际启动 PostgreSQL、Qdrant 和应用，完成以下闭环：
@@ -936,6 +1000,9 @@ LLM model: qwen-plus
 - bad cases 支持 `NO_HIT`、`LOW_RECALL` 和 `LOW_RANK` 三类原因。
 - summary 返回 `badCaseCount`、`noHitCount`、`lowRecallCount` 和 `lowRankCount`。
 - 新增评测分析 HTTP 集成测试，覆盖 bad cases 分类、排序、summary 计数、question results List 结构以及不调用 RetrievalService / LLM。
+- 新增 Phase 6 demo 示例文档、评测问题模板、demo guide、示例评测集说明和示例报告说明。
+- 新增可选 PowerShell demo 脚本，自动化创建知识库、上传示例文档、process、index 和查询 chunks。
+- 补充自动测试与真实链路 demo 的可复现性说明。
 
 ## 本阶段刻意不做
 
@@ -981,7 +1048,8 @@ LLM model: qwen-plus
 - Phase 6.1 实现说明：`docs/round-notes/round-025-implementation-notes.md`
 - Phase 6.2 实现说明：`docs/round-notes/round-026-implementation-notes.md`
 - Phase 6.3 实现说明：`docs/round-notes/round-027-implementation-notes.md`
+- Phase 6.4 实现说明：`docs/round-notes/round-028-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 6.4：示例知识库、示例评测集与一键演示流程。下一阶段重点是补固定示例文档、固定示例评测集和可复现的真实链路演示，不是继续增加模型供应商或模型能力。
+进入 Phase 6.5：工程化收尾、项目文档、简历材料与可选增强规划。下一阶段重点是整理交付材料、工程边界和后续增强路线，不是继续增加复杂后端功能。

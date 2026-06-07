@@ -1,0 +1,88 @@
+{
+  "questions": [
+    {
+      "question": "员工年假最晚可以累计到什么时候？",
+      "groundTruthAnswer": "未使用的年假最晚可以累计到下一年度第一季度末，即下一年 3 月 31 日。",
+      "relevantChunkIds": ["REPLACE_WITH_HR_ANNUAL_LEAVE_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "hr-handbook.md 中的 Annual Leave 段落"
+    },
+    {
+      "question": "病假超过几天需要提供医疗证明？",
+      "groundTruthAnswer": "病假超过连续两个工作日时，需要提供医疗证明或等效证明。",
+      "relevantChunkIds": ["REPLACE_WITH_HR_SICK_LEAVE_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "hr-handbook.md 中的 Sick Leave 段落"
+    },
+    {
+      "question": "试用期默认持续多久？",
+      "groundTruthAnswer": "新员工试用期为三个月。",
+      "relevantChunkIds": ["REPLACE_WITH_HR_PROBATION_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "hr-handbook.md 中的 Probation Period 段落"
+    },
+    {
+      "question": "加班调休应在多长时间内使用？",
+      "groundTruthAnswer": "加班转换的调休应在加班日期后的 60 个自然日内使用。",
+      "relevantChunkIds": ["REPLACE_WITH_HR_OVERTIME_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "hr-handbook.md 中的 Overtime And Time Off In Lieu 段落"
+    },
+    {
+      "question": "差旅报销需要提交哪些材料？",
+      "groundTruthAnswer": "差旅报销需要提交差旅审批记录、行程单、交通票据、酒店发票和简短出差目的说明。",
+      "relevantChunkIds": ["REPLACE_WITH_EXPENSE_TRAVEL_MATERIALS_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "expense-policy.md 中的 Travel Reimbursement Materials 段落"
+    },
+    {
+      "question": "发票必须包含哪些信息？",
+      "groundTruthAnswer": "发票必须包含正确的公司抬头、税号、金额、日期和项目说明。",
+      "relevantChunkIds": ["REPLACE_WITH_EXPENSE_INVOICE_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "expense-policy.md 中的 Invoice Requirements 段落"
+    },
+    {
+      "question": "普通费用应在多久内提交报销？",
+      "groundTruthAnswer": "普通费用应在费用发生后的 30 个自然日内提交报销。",
+      "relevantChunkIds": ["REPLACE_WITH_EXPENSE_DEADLINE_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "expense-policy.md 中的 Reimbursement Deadline 段落"
+    },
+    {
+      "question": "超过 5000 元的报销需要什么额外审批？",
+      "groundTruthAnswer": "超过 5000 元的报销需要在财务审核前获得部门负责人审批。",
+      "relevantChunkIds": ["REPLACE_WITH_EXPENSE_APPROVAL_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "expense-policy.md 中的 Approval Flow 段落"
+    },
+    {
+      "question": "功能分支应该使用什么命名格式？",
+      "groundTruthAnswer": "功能分支应该使用 feature/<short-topic> 格式。",
+      "relevantChunkIds": ["REPLACE_WITH_ENGINEERING_BRANCH_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "engineering-guide.md 中的 Branch Naming 段落"
+    },
+    {
+      "question": "commit message 第一行建议控制在多少字符以内？",
+      "groundTruthAnswer": "commit message 第一行应控制在 72 个字符以内。",
+      "relevantChunkIds": ["REPLACE_WITH_ENGINEERING_COMMIT_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "engineering-guide.md 中的 Commit Message Rules 段落"
+    },
+    {
+      "question": "每个 pull request 合并前至少需要什么条件？",
+      "groundTruthAnswer": "每个 pull request 合并前至少需要一个 reviewer approval。",
+      "relevantChunkIds": ["REPLACE_WITH_ENGINEERING_REVIEW_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "engineering-guide.md 中的 Code Review Rules 段落"
+    },
+    {
+      "question": "发布前需要检查哪些主要事项？",
+      "groundTruthAnswer": "发布前需要运行自动化测试、检查数据库迁移，并在 staging 环境验证主要用户流程。",
+      "relevantChunkIds": ["REPLACE_WITH_ENGINEERING_RELEASE_CHUNK_ID"],
+      "questionType": "fact",
+      "sourceHint": "engineering-guide.md 中的 Release Flow 段落"
+    }
+  ]
+}
