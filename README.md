@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 6.1 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及 evaluation dataset / evaluation question 评测集基础管理；默认仍使用 Mock Embedding 与 Mock LLM。
+当前阶段：Phase 6.2 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志、evaluation dataset / evaluation question 评测集基础管理，以及检索评测运行与 Recall@K / HitRate@K / MRR 指标计算；默认仍使用 Mock Embedding 与 Mock LLM。
 
 ## 技术栈
 
@@ -165,7 +165,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答、检索日志、LLM 调用日志查询接口，以及评测集 / 评测问题管理接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答、检索日志、LLM 调用日志查询接口，以及评测集、评测问题、检索评测运行和 report 查询接口。
 
 ## 知识库 CRUD API
 
@@ -687,7 +687,7 @@ createdAt
 
 ## 评测集 API
 
-Phase 6.1 新增 evaluation dataset / evaluation question 基础管理，用于人工维护后续检索评测所需的标准问题和相关 chunk 标注。本轮只负责录入数据，不运行检索评测，也不计算 Recall@K、HitRate@K 或 MRR。
+Phase 6.1 新增 evaluation dataset / evaluation question 基础管理，用于人工维护检索评测所需的标准问题和相关 chunk 标注。Phase 6.2 新增同步检索评测运行，会基于评测问题调用 `RetrievalService`，计算 Recall@K、HitRate@K 和 MRR，并保存 report 与 question-level result。
 
 创建评测集：
 
@@ -742,6 +742,36 @@ GET /api/documents/{documentId}/chunks 查看 chunk
 ```
 
 创建问题时，`relevantChunkIds` 必须存在、必须是 active chunk，并且必须属于评测集对应的 `knowledgeBaseId`。系统会把请求中的 chunkId 列表保存为 `relevant_chunk_ids_json`，并从关系库 chunk 读取 `contentHash` 保存到 `relevant_content_hashes_json`，用于后续 chunk 重新切分后的辅助迁移判断。
+
+运行检索评测：
+
+```bash
+curl -X POST http://localhost:8080/api/evaluation/datasets/1/run \
+  -H "Content-Type: application/json" \
+  -d '{"topK":5}'
+```
+
+查看 report：
+
+```bash
+curl http://localhost:8080/api/evaluation/reports/1
+```
+
+查看 question-level results：
+
+```bash
+curl http://localhost:8080/api/evaluation/reports/1/question-results
+```
+
+指标定义：
+
+```text
+Recall@K = 单题 topK 命中的相关 chunk 数 / 标准相关 chunk 数；report 取所有题平均值
+HitRate@K = 单题 topK 只要命中任意相关 chunk 即为 hit；report 取 hit 题数 / 总题数
+MRR = 单题第一个命中相关 chunk 的排名为 r，则 reciprocalRank = 1 / r；report 取所有题平均值
+```
+
+当前评测只调用 `RetrievalService`，不调用 `ChatService`、`LlmService`、`PromptBuilder` 或任何 LLM Client，不生成 answer，也不消耗真实 LLM 额度。第一版同步执行；任一问题检索失败时，report 标记为 `FAILED` 并保存 `errorMessage`。
 
 ## Phase 5 完整链路验证
 
@@ -871,6 +901,13 @@ LLM model: qwen-plus
 - 创建评测问题时校验 relevantChunkIds 存在、active 且属于 dataset 对应知识库。
 - 创建 / 导入评测问题时记录 relevant chunk contentHash，并更新 dataset.questionCount。
 - 新增评测模块相关 HTTP 集成测试。
+- 新增 `evaluation_report` 和 `evaluation_question_result` 表。
+- 新增 `RetrievalMetricsCalculator`，计算 Recall@K、HitRate@K 和 MRR。
+- 新增 `EvaluationRunService`，同步编排评测集问题读取、检索调用、指标计算和 report 落库。
+- 新增 `POST /api/evaluation/datasets/{datasetId}/run`。
+- 新增 `GET /api/evaluation/reports/{reportId}`。
+- 新增 `GET /api/evaluation/reports/{reportId}/question-results`。
+- 新增指标计算单元测试和评测运行 HTTP 集成测试。
 
 ## 本阶段刻意不做
 
@@ -885,11 +922,11 @@ LLM model: qwen-plus
 - 不做复杂重试。
 - 不做 PDF / docx 解析。
 - 不做登录、JWT、Spring Security 权限系统。
-- 不做 evaluation_report 表。
-- 不运行批量检索评测。
-- 不计算 Recall@K / HitRate@K / MRR。
 - 不做公开数据集自动导入。
 - 不做 LLM-as-judge。
+- 不做 LLM 答案质量评测。
+- 不做 bad cases 专门接口。
+- 不做异步评测任务或任务队列。
 
 ## 阶段文档
 
@@ -914,7 +951,8 @@ LLM model: qwen-plus
 - Phase 5 总结：`docs/phase-notes/phase-005-summary.md`
 - Phase 5.6 实现说明：`docs/round-notes/round-024-implementation-notes.md`
 - Phase 6.1 实现说明：`docs/round-notes/round-025-implementation-notes.md`
+- Phase 6.2 实现说明：`docs/round-notes/round-026-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 6.2：检索评测运行与 Recall@K / HitRate@K / MRR 计算。下一阶段重点是基于 evaluation questions 批量调用检索链路并生成指标，不是继续增加模型供应商或模型能力。
+进入 Phase 6.3：bad cases 输出、评测报告查询与问题级结果分析。下一阶段重点是围绕 evaluation report 做分析增强，不是继续增加模型供应商或模型能力。

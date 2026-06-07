@@ -50,6 +50,8 @@ class EvaluationControllerTest {
 
     @BeforeEach
     void cleanData() {
+        jdbcTemplate.execute("DELETE FROM evaluation_question_result");
+        jdbcTemplate.execute("DELETE FROM evaluation_report");
         jdbcTemplate.execute("DELETE FROM evaluation_question");
         jdbcTemplate.execute("DELETE FROM evaluation_dataset");
         jdbcTemplate.execute("DELETE FROM document_chunk");
