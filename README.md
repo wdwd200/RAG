@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 5.5 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及可选的千问真实 LLM；默认仍使用 Mock LLM。
+当前阶段：Phase 5 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志，以及可选的千问真实 embedding 和 LLM；默认仍使用 Mock Embedding 与 Mock LLM。
 
 ## 技术栈
 
@@ -685,6 +685,43 @@ createdAt
 
 每次 LLM 调用会记录 provider、modelName、latencyMs、success 和 errorMessage。当前 LLM Client 没有暴露真实 usage，因此 `promptTokens` 和 `completionTokens` 保持为空。成功日志跟随问答主事务提交；LLM 失败日志使用独立事务保存，随后继续抛出原异常，主问答事务会回滚。
 
+## Phase 5 完整链路验证
+
+Phase 5 收尾时已实际启动 PostgreSQL、Qdrant 和应用，完成以下闭环：
+
+```text
+创建知识库
+  ↓
+上传 txt 文档
+  ↓
+process 生成 chunk
+  ↓
+index 写入 Qdrant
+  ↓
+retrieval/search 返回关系库 active chunk
+  ↓
+chat/once 返回 answer、references、requestId
+  ↓
+chat/stream 返回完整 SSE 事件
+  ↓
+按 requestId 查询 retrieval_log 和 llm_call_log
+```
+
+Mock 链路使用 `rag_chunks_phase5_6_mock_384` 和 384 维向量，文档成功流转到 `INDEXED`，once 与 stream 均写入消息和审计日志。
+
+Qwen 真实链路使用：
+
+```text
+Embedding provider: qwen
+Embedding model: text-embedding-v4
+Vector dimension: 1024
+Qdrant collection: rag_chunks_phase5_6_qwen_1024
+LLM provider: qwen
+LLM model: qwen-plus
+```
+
+真实链路的 upload、process、index、retrieval/search、chat/once 和 chat/stream 均验证通过。真实 API key 只从本地 `.env` 读取，没有输出到日志、文档或 Git。
+
 ## 当前已完成
 
 - 初始化 Maven Spring Boot 项目。
@@ -766,6 +803,9 @@ createdAt
 - `/api/chat/once` 与 `/api/chat/stream` 复用同一套问答工作流。
 - stream 流程同样保存 chat_message、retrieval_log 和 llm_call_log。
 - 新增 LLM 成功 / 失败日志、SSE 顺序、参数校验和持久化测试。
+- 完成 Mock Embedding + Mock LLM 的 RAG 问答完整链路验证。
+- 完成 `text-embedding-v4` + `qwen-plus` 的真实 RAG 问答完整链路验证。
+- 完成 Phase 5 问答、SSE 和 requestId 审计链路导读。
 
 ## 本阶段刻意不做
 
@@ -801,7 +841,9 @@ createdAt
 - Phase 5.3 实现说明：`docs/round-notes/round-021-implementation-notes.md`
 - Phase 5.4 实现说明：`docs/round-notes/round-022-implementation-notes.md`
 - Phase 5.5 实现说明：`docs/round-notes/round-023-implementation-notes.md`
+- Phase 5 总结：`docs/phase-notes/phase-005-summary.md`
+- Phase 5.6 实现说明：`docs/round-notes/round-024-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 5.6：Phase 5 收尾、问答链路验证与导读整理。
+进入 Phase 6.1：`evaluation_dataset` / `evaluation_question` 表与评测集导入基础。下一阶段重点是评测模块，不是继续增加模型供应商或模型能力。
