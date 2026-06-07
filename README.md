@@ -2,7 +2,7 @@
 
 RAG 后端知识库是一个面向知识库管理、文档上传、文档解析、chunk 入库和后续检索增强生成能力的 Spring Boot 后端项目。
 
-当前阶段：Phase 6.2 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志、evaluation dataset / evaluation question 评测集基础管理，以及检索评测运行与 Recall@K / HitRate@K / MRR 指标计算；默认仍使用 Mock Embedding 与 Mock LLM。
+当前阶段：Phase 6.3 已完成。项目已支持文档处理、向量检索、一次性与 SSE RAG 问答、requestId 审计追踪、LLM 调用日志、evaluation dataset / evaluation question 评测集基础管理、检索评测运行与 Recall@K / HitRate@K / MRR 指标计算，以及 report summary / bad cases 分析查询；默认仍使用 Mock Embedding 与 Mock LLM。
 
 ## 技术栈
 
@@ -165,7 +165,7 @@ curl http://localhost:8080/actuator/health
 - Swagger UI: http://localhost:8080/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答、检索日志、LLM 调用日志查询接口，以及评测集、评测问题、检索评测运行和 report 查询接口。
+当前 Swagger 页面能看到健康检查、Qdrant 健康检查、知识库 CRUD、文档、chunk、向量检索、一次性 / SSE RAG 问答、检索日志、LLM 调用日志查询接口，以及评测集、评测问题、检索评测运行、report 查询、report summary 和 bad cases 分析接口。
 
 ## 知识库 CRUD API
 
@@ -687,7 +687,7 @@ createdAt
 
 ## 评测集 API
 
-Phase 6.1 新增 evaluation dataset / evaluation question 基础管理，用于人工维护检索评测所需的标准问题和相关 chunk 标注。Phase 6.2 新增同步检索评测运行，会基于评测问题调用 `RetrievalService`，计算 Recall@K、HitRate@K 和 MRR，并保存 report 与 question-level result。
+Phase 6.1 新增 evaluation dataset / evaluation question 基础管理，用于人工维护检索评测所需的标准问题和相关 chunk 标注。Phase 6.2 新增同步检索评测运行，会基于评测问题调用 `RetrievalService`，计算 Recall@K、HitRate@K 和 MRR，并保存 report 与 question-level result。Phase 6.3 新增 report summary 与 bad cases 分析查询，用于快速定位未命中、召回不完整或命中排名靠后的问题。
 
 创建评测集：
 
@@ -763,6 +763,18 @@ curl http://localhost:8080/api/evaluation/reports/1
 curl http://localhost:8080/api/evaluation/reports/1/question-results
 ```
 
+查看 report summary：
+
+```bash
+curl http://localhost:8080/api/evaluation/reports/1/summary
+```
+
+查看 bad cases：
+
+```bash
+curl http://localhost:8080/api/evaluation/reports/1/bad-cases
+```
+
 指标定义：
 
 ```text
@@ -771,7 +783,17 @@ HitRate@K = 单题 topK 只要命中任意相关 chunk 即为 hit；report 取 h
 MRR = 单题第一个命中相关 chunk 的排名为 r，则 reciprocalRank = 1 / r；report 取所有题平均值
 ```
 
-当前评测只调用 `RetrievalService`，不调用 `ChatService`、`LlmService`、`PromptBuilder` 或任何 LLM Client，不生成 answer，也不消耗真实 LLM 额度。第一版同步执行；任一问题检索失败时，report 标记为 `FAILED` 并保存 `errorMessage`。
+bad cases 判定规则：
+
+```text
+NO_HIT = topK 内没有命中任何 relevant chunk
+LOW_RECALL = 已命中，但 Recall@K < 1
+LOW_RANK = 已全部召回，但第一个命中排名大于 1
+```
+
+summary 中的 `badCaseCount` 是上述三类 bad case 总数，`noHitCount`、`lowRecallCount` 和 `lowRankCount` 分别统计三类问题数量。Phase 6.3 的 summary / bad-cases 查询只读取已经落库的 `evaluation_report` 和 `evaluation_question_result`，不会重新运行评测，不会调用 `RetrievalService`，也不会调用 LLM。
+
+当前评测运行只调用 `RetrievalService`，不调用 `ChatService`、`LlmService`、`PromptBuilder` 或任何 LLM Client，不生成 answer，也不消耗真实 LLM 额度。第一版同步执行；任一问题检索失败时，report 标记为 `FAILED` 并保存 `errorMessage`。
 
 ## Phase 5 完整链路验证
 
@@ -908,6 +930,12 @@ LLM model: qwen-plus
 - 新增 `GET /api/evaluation/reports/{reportId}`。
 - 新增 `GET /api/evaluation/reports/{reportId}/question-results`。
 - 新增指标计算单元测试和评测运行 HTTP 集成测试。
+- 新增 `EvaluationAnalysisService`，集中负责 report summary 与 bad cases 分析。
+- 新增 `GET /api/evaluation/reports/{reportId}/summary`。
+- 新增 `GET /api/evaluation/reports/{reportId}/bad-cases`。
+- bad cases 支持 `NO_HIT`、`LOW_RECALL` 和 `LOW_RANK` 三类原因。
+- summary 返回 `badCaseCount`、`noHitCount`、`lowRecallCount` 和 `lowRankCount`。
+- 新增评测分析 HTTP 集成测试，覆盖 bad cases 分类、排序、summary 计数、question results List 结构以及不调用 RetrievalService / LLM。
 
 ## 本阶段刻意不做
 
@@ -925,7 +953,7 @@ LLM model: qwen-plus
 - 不做公开数据集自动导入。
 - 不做 LLM-as-judge。
 - 不做 LLM 答案质量评测。
-- 不做 bad cases 专门接口。
+- 不新增复杂评测指标。
 - 不做异步评测任务或任务队列。
 
 ## 阶段文档
@@ -952,7 +980,8 @@ LLM model: qwen-plus
 - Phase 5.6 实现说明：`docs/round-notes/round-024-implementation-notes.md`
 - Phase 6.1 实现说明：`docs/round-notes/round-025-implementation-notes.md`
 - Phase 6.2 实现说明：`docs/round-notes/round-026-implementation-notes.md`
+- Phase 6.3 实现说明：`docs/round-notes/round-027-implementation-notes.md`
 
 ## 下一步计划
 
-进入 Phase 6.3：bad cases 输出、评测报告查询与问题级结果分析。下一阶段重点是围绕 evaluation report 做分析增强，不是继续增加模型供应商或模型能力。
+进入 Phase 6.4：示例知识库、示例评测集与一键演示流程。下一阶段重点是补固定示例文档、固定示例评测集和可复现的真实链路演示，不是继续增加模型供应商或模型能力。
